@@ -5,7 +5,13 @@ const Pharmacy = require("../models/Pharmacy");
 
 const router = express.Router();
 
-// Global search endpoint
+function matchesText(doc, q, fields) {
+  const kw = q.toLowerCase();
+  return fields.some(
+    (f) => typeof doc[f] === "string" && doc[f].toLowerCase().includes(kw)
+  );
+}
+
 router.get("/", async (req, res) => {
   try {
     const {
@@ -25,81 +31,134 @@ router.get("/", async (req, res) => {
 
     const skip = (page - 1) * limit;
     const results = {};
+    const lim = parseInt(limit);
 
-    // Build search query
-    const searchQuery = q ? { $text: { $search: q } } : {};
-
-    // Location-based search
-    let locationQuery = {};
+    // Build filters
+    let geoFilter = {};
     if (lat && lng) {
-      locationQuery = {
+      geoFilter = {
         "address.coordinates": {
           $near: {
             $geometry: {
               type: "Point",
               coordinates: [parseFloat(lng), parseFloat(lat)],
             },
-            $maxDistance: distance * 1000, // Convert km to meters
+            $maxDistance: distance * 1000,
           },
         },
       };
     } else if (city) {
-      locationQuery = { "address.city": new RegExp(city, "i") };
+      geoFilter = { "address.city": new RegExp(city, "i") };
     }
 
-    // Search doctors
+    // --- DOCTORS ---
     if (type === "all" || type === "doctors") {
-      let doctorQuery = { ...searchQuery, ...locationQuery, isActive: true };
-
-      // Add filters
-      if (specialization) doctorQuery.specialization = specialization;
+      let baseQuery = { ...geoFilter, isActive: true };
+      if (specialization) baseQuery.specialization = specialization;
       if (experience) {
         const [min, max] = experience.split("-").map(Number);
-        doctorQuery.experience = max ? { $gte: min, $lte: max } : { $gte: min };
+        baseQuery.experience = max ? { $gte: min, $lte: max } : { $gte: min };
       }
       if (fee) {
         const [min, max] = fee.split("-").map(Number);
-        doctorQuery.consultationFee = max
+        baseQuery.consultationFee = max
           ? { $gte: min, $lte: max }
           : { $gte: min };
       }
       if (rating) {
-        doctorQuery["rating.average"] = { $gte: parseFloat(rating) };
+        baseQuery["rating.average"] = { $gte: parseFloat(rating) };
       }
 
-      const doctors = await Doctor.find(doctorQuery)
-        .select("-reviews -__v")
-        .limit(parseInt(limit))
-        .skip(skip)
-        .sort(q ? { score: { $meta: "textScore" } } : { "rating.average": -1 });
+      let doctors;
+      if (q && lat && lng) {
+        // Geo first, then manual text search
+        doctors = await Doctor.find(baseQuery)
+          .select("-reviews -__v")
+          .limit(lim * 5) // get extra for manual filtering
+          .lean();
 
+        doctors = doctors
+          .filter((d) => matchesText(d, q, ["name", "specialization"]))
+          .slice(0, lim);
+      } else if (q) {
+        // Text search only
+        doctors = await Doctor.find({ $text: { $search: q }, ...baseQuery })
+          .select("-reviews -__v")
+          .limit(lim)
+          .skip(skip)
+          .sort({ score: { $meta: "textScore" } });
+      } else {
+        // Just geo or no q
+        doctors = await Doctor.find(baseQuery)
+          .select("-reviews -__v")
+          .limit(lim)
+          .skip(skip)
+          .sort({ "rating.average": -1 });
+      }
       results.doctors = doctors;
     }
 
-    // Search clinics
+    // --- CLINICS ---
     if (type === "all" || type === "clinics") {
-      let clinicQuery = { ...searchQuery, ...locationQuery, isActive: true };
+      let baseQuery = { ...geoFilter, isActive: true };
 
-      const clinics = await Clinic.find(clinicQuery)
-        .select("-reviews -__v")
-        .populate("doctors", "name specialization")
-        .limit(parseInt(limit))
-        .skip(skip)
-        .sort(q ? { score: { $meta: "textScore" } } : { "rating.average": -1 });
-
+      let clinics;
+      if (q && lat && lng) {
+        clinics = await Clinic.find(baseQuery)
+          .select("-reviews -__v")
+          .populate("doctors", "name specialization")
+          .limit(lim * 5)
+          .lean();
+        clinics = clinics
+          .filter((cl) => matchesText(cl, q, ["name"]))
+          .slice(0, lim);
+      } else if (q) {
+        clinics = await Clinic.find({ $text: { $search: q }, ...baseQuery })
+          .select("-reviews -__v")
+          .populate("doctors", "name specialization")
+          .limit(lim)
+          .skip(skip)
+          .sort({ score: { $meta: "textScore" } });
+      } else {
+        clinics = await Clinic.find(baseQuery)
+          .select("-reviews -__v")
+          .populate("doctors", "name specialization")
+          .limit(lim)
+          .skip(skip)
+          .sort({ "rating.average": -1 });
+      }
       results.clinics = clinics;
     }
 
-    // Search pharmacies
+    // --- PHARMACIES ---
     if (type === "all" || type === "pharmacies") {
-      let pharmacyQuery = { ...searchQuery, ...locationQuery, isActive: true };
+      let baseQuery = { ...geoFilter, isActive: true };
 
-      const pharmacies = await Pharmacy.find(pharmacyQuery)
-        .select("-reviews -medications -__v")
-        .limit(parseInt(limit))
-        .skip(skip)
-        .sort(q ? { score: { $meta: "textScore" } } : { "rating.average": -1 });
-
+      let pharmacies;
+      if (q && lat && lng) {
+        pharmacies = await Pharmacy.find(baseQuery)
+          .select("-reviews -medications -__v")
+          .limit(lim * 5)
+          .lean();
+        pharmacies = pharmacies
+          .filter((ph) => matchesText(ph, q, ["name"]))
+          .slice(0, lim);
+      } else if (q) {
+        pharmacies = await Pharmacy.find({
+          $text: { $search: q },
+          ...baseQuery,
+        })
+          .select("-reviews -medications -__v")
+          .limit(lim)
+          .skip(skip)
+          .sort({ score: { $meta: "textScore" } });
+      } else {
+        pharmacies = await Pharmacy.find(baseQuery)
+          .select("-reviews -medications -__v")
+          .limit(lim)
+          .skip(skip)
+          .sort({ "rating.average": -1 });
+      }
       results.pharmacies = pharmacies;
     }
 
@@ -114,7 +173,7 @@ router.get("/", async (req, res) => {
       results,
       totalResults,
       page: parseInt(page),
-      limit: parseInt(limit),
+      limit: lim,
       query: {
         searchTerm: q,
         type,
@@ -132,15 +191,13 @@ router.get("/", async (req, res) => {
   }
 });
 
-// Autocomplete suggestions
+// Suggestions endpoint remains unchanged
 router.get("/suggestions", async (req, res) => {
   try {
     const { q, type = "all" } = req.query;
-
     if (!q || q.length < 2) {
       return res.json({ suggestions: [] });
     }
-
     const suggestions = [];
     const regex = new RegExp(q, "i");
 
@@ -161,7 +218,6 @@ router.get("/suggestions", async (req, res) => {
         });
       });
     }
-
     if (type === "all" || type === "clinics") {
       const clinics = await Clinic.find({
         name: regex,
@@ -179,7 +235,6 @@ router.get("/suggestions", async (req, res) => {
         });
       });
     }
-
     res.json({ suggestions: suggestions.slice(0, 10) });
   } catch (error) {
     res.status(500).json({

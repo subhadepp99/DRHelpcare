@@ -16,6 +16,7 @@ const searchRoutes = require("./routes/search");
 const bookingRoutes = require("./routes/bookings");
 const dashboardRoutes = require("./routes/dashboard");
 const patientRoutes = require("./routes/patients");
+const departmentRoutes = require("./routes/department");
 
 dotenv.config();
 
@@ -31,12 +32,12 @@ const limiter = rateLimit({
 
 // Middleware
 app.use(limiter);
-app.use(
-  cors({
-    origin: process.env.CLIENT_URL || "http://localhost:3000",
-    credentials: true,
-  })
-);
+// app.use(
+//   cors({
+//     origin: process.env.CLIENT_URL || "http://localhost:3000",
+//     credentials: true,
+//   })
+// );
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
@@ -53,6 +54,7 @@ app.use("/api/search", searchRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/patients", patientRoutes);
+app.use("/api/departments", departmentRoutes);
 
 // Error handling middleware
 app.use((error, req, res, next) => {
