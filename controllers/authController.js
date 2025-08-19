@@ -1,90 +1,431 @@
-const express = require("express");
-const mongoose = require("mongoose");
-const cors = require("cors");
-const dotenv = require("dotenv");
-const path = require("path");
-const multer = require("multer");
-const rateLimit = require("express-rate-limit");
+const jwt = require("jsonwebtoken");
+const User = require("../models/User");
+const { createActivity } = require("../utils/activity");
+const {
+  hashPassword,
+  comparePassword,
+  validatePassword,
+} = require("../utils/passwordUtils");
 
-// Import routes
-const authRoutes = require("./routes/auth");
-const doctorRoutes = require("./routes/doctors");
-const clinicRoutes = require("./routes/clinics");
-const pharmacyRoutes = require("./routes/pharmacies");
-const userRoutes = require("./routes/users");
-const searchRoutes = require("./routes/search");
-const bookingRoutes = require("./routes/bookings");
-const dashboardRoutes = require("./routes/dashboard");
-const patientRoutes = require("./routes/patients");
-const departmentRoutes = require("./routes/department");
+// Generate JWT token
+const generateToken = (userId) => {
+  return jwt.sign(
+    { userId },
+    process.env.JWT_SECRET || "healthcare_secret_key_2024",
+    { expiresIn: "24h" }
+  );
+};
 
-dotenv.config();
+// Generate refresh token
+const generateRefreshToken = (userId) => {
+  return jwt.sign(
+    { userId, type: "refresh" },
+    process.env.JWT_REFRESH_SECRET || "healthcare_refresh_secret_2024",
+    { expiresIn: "7d" }
+  );
+};
 
-const app = express();
-const PORT = process.env.PORT || 5000;
+// Register new user
+exports.register = async (req, res) => {
+  try {
+    const {
+      username,
+      email,
+      password,
+      firstName,
+      lastName,
+      phone,
+      role = "user",
+    } = req.body;
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: "Too many requests from this IP, please try again later.",
-});
+    // Validation
+    if (!username || !email || !password || !firstName || !lastName || !phone) {
+      return res.status(400).json({
+        success: false,
+        message: "All required fields must be provided",
+      });
+    }
 
-// Middleware
-app.use(limiter);
-// app.use(
-//   cors({
-//     origin: process.env.CLIENT_URL || "http://localhost:3000",
-//     credentials: true,
-//   })
-// );
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.success) {
+      return res
+        .status(400)
+        .json({ success: false, message: passwordValidation.message });
+    }
 
-// Static file serving for uploads
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-
-// Routes
-app.use("/api/auth", authRoutes);
-app.use("/api/doctors", doctorRoutes);
-app.use("/api/clinics", clinicRoutes);
-app.use("/api/pharmacies", pharmacyRoutes);
-app.use("/api/users", userRoutes);
-app.use("/api/search", searchRoutes);
-app.use("/api/bookings", bookingRoutes);
-app.use("/api/dashboard", dashboardRoutes);
-app.use("/api/patients", patientRoutes);
-app.use("/api/departments", departmentRoutes);
-
-// Error handling middleware
-app.use((error, req, res, next) => {
-  console.error(error);
-  res.status(500).json({
-    message: error.message || "Something went wrong!",
-    ...(process.env.NODE_ENV === "development" && { stack: error.stack }),
-  });
-});
-
-// 404 handler
-app.use("*", (req, res) => {
-  res.status(404).json({ message: "Route not found" });
-});
-
-// Database connection
-mongoose
-  .connect(process.env.MONGODB_URI || "mongodb://localhost:27017/healthcare", {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
-  .then(() => {
-    console.log("Connected to MongoDB");
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+    // Check if user already exists
+    const existingUser = await User.findOne({
+      $or: [
+        { email: email.toLowerCase() },
+        { username: username.toLowerCase() },
+        { phone },
+      ],
     });
-  })
-  .catch((error) => {
-    console.error("Database connection error:", error);
-    process.exit(1);
-  });
 
-module.exports = app;
+    if (existingUser) {
+      let field = "email";
+      if (existingUser.username === username.toLowerCase()) field = "username";
+      if (existingUser.phone === phone) field = "phone number";
+
+      return res.status(400).json({
+        success: false,
+        message: `User with this ${field} already exists`,
+      });
+    }
+
+    // Only allow admin/superuser creation by existing admins
+    if (["admin", "superuser"].includes(role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Cannot create admin users through registration",
+      });
+    }
+
+    // Create new user
+    const user = new User({
+      username: username.toLowerCase(),
+      email: email.toLowerCase(),
+      password: await hashPassword(password),
+      firstName,
+      lastName,
+      phone,
+      role: "user", // Force user role for registration
+    });
+
+    await user.save();
+
+    // Generate tokens
+    const token = generateToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+
+    // Create activity log
+    await createActivity({
+      type: "user_registered",
+      message: `New user registration: ${user.firstName} ${user.lastName}`,
+      user: user._id,
+      targetId: user._id,
+      targetModel: "User",
+      ipAddress: req.ip,
+      userAgent: req.get("User-Agent"),
+    });
+
+    // Remove password from response
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
+    res.status(201).json({
+      success: true,
+      message: "User registered successfully",
+      data: {
+        user: userResponse,
+        token,
+        refreshToken,
+      },
+    });
+  } catch (error) {
+    console.error("Registration error:", error);
+
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({
+        success: false,
+        message: `User with this ${field} already exists`,
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Registration failed",
+      error: error.message,
+    });
+  }
+};
+
+// Login user
+exports.login = async (req, res) => {
+  try {
+    const { identifier, email, username, phone, password } = req.body;
+    const authIdentifier = identifier || email || username || phone;
+
+    if (!authIdentifier || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email/username/phone and password are required",
+      });
+    }
+
+    // Find user by email, username, or phone
+    const user = await User.findOne({
+      $or: [
+        { email: authIdentifier.toLowerCase() },
+        { username: authIdentifier.toLowerCase() },
+        { phone: authIdentifier },
+      ],
+      isActive: true,
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
+    }
+
+    // Check password
+    const isValidPassword = await user.comparePassword(password);
+    if (!isValidPassword) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
+    }
+
+    // Update last login
+    await user.updateLastLogin();
+
+    // Generate tokens
+    const token = generateToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+
+    // Create activity log
+    await createActivity({
+      type:
+        user.role === "admin" || user.role === "superuser"
+          ? "admin_login"
+          : "user_login",
+      message: `User ${user.username} logged in`,
+      user: user._id,
+      targetId: user._id,
+      targetModel: "User",
+      ipAddress: req.ip,
+      userAgent: req.get("User-Agent"),
+    });
+
+    // Remove password from response
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
+    res.json({
+      success: true,
+      message: "Login successful",
+      data: {
+        user: userResponse,
+        token,
+        refreshToken,
+      },
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Login failed",
+      error: error.message,
+    });
+  }
+};
+
+// Refresh token
+exports.refreshToken = async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(401).json({
+        success: false,
+        message: "Refresh token is required",
+      });
+    }
+
+    // Verify refresh token
+    const decoded = jwt.verify(
+      refreshToken,
+      process.env.JWT_REFRESH_SECRET || "healthcare_refresh_secret_2024"
+    );
+
+    if (decoded.type !== "refresh") {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid refresh token",
+      });
+    }
+
+    // Find user
+    const user = await User.findById(decoded.userId).select("-password");
+    if (!user || !user.isActive) {
+      return res.status(401).json({
+        success: false,
+        message: "User not found or inactive",
+      });
+    }
+
+    // Generate new tokens
+    const newToken = generateToken(user._id);
+    const newRefreshToken = generateRefreshToken(user._id);
+
+    res.json({
+      success: true,
+      message: "Token refreshed successfully",
+      data: {
+        user,
+        token: newToken,
+        refreshToken: newRefreshToken,
+      },
+    });
+  } catch (error) {
+    console.error("Refresh token error:", error);
+    res.status(401).json({
+      success: false,
+      message: "Invalid or expired refresh token",
+    });
+  }
+};
+
+// Get current user
+exports.getMe = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("-password -__v");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      data: user,
+    });
+  } catch (error) {
+    console.error("Get current user error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch user data",
+      error: error.message,
+    });
+  }
+};
+
+// Logout user
+exports.logout = async (req, res) => {
+  try {
+    // In a production app, you might want to blacklist the token
+    // For now, we'll just return a success response
+
+    // Create activity log
+    await createActivity({
+      type: "user_logout",
+      message: `User ${req.user.username} logged out`,
+      user: req.user.id,
+      targetId: req.user.id,
+      targetModel: "User",
+      ipAddress: req.ip,
+      userAgent: req.get("User-Agent"),
+    });
+
+    res.json({
+      success: true,
+      message: "Logged out successfully",
+    });
+  } catch (error) {
+    console.error("Logout error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Logout failed",
+      error: error.message,
+    });
+  }
+};
+
+// Change password
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password and new password are required",
+      });
+    }
+
+    const newPasswordValidation = validatePassword(newPassword);
+    if (!newPasswordValidation.success) {
+      return res
+        .status(400)
+        .json({ success: false, message: newPasswordValidation.message });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Verify current password
+    const isValidPassword = await user.comparePassword(currentPassword);
+    if (!isValidPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password is incorrect",
+      });
+    }
+
+    // Update password
+    user.password = await hashPassword(newPassword);
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Password changed successfully",
+    });
+  } catch (error) {
+    console.error("Change password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to change password",
+      error: error.message,
+    });
+  }
+};
+
+// Forgot password (basic implementation)
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    const user = await User.findOne({
+      email: email.toLowerCase(),
+      isActive: true,
+    });
+
+    // Always return success to prevent email enumeration
+    res.json({
+      success: true,
+      message:
+        "If the email exists, you will receive password reset instructions",
+    });
+
+    // In production, implement actual email sending here
+    if (user) {
+      console.log(`Password reset requested for user: ${user.email}`);
+      // Generate reset token and send email
+    }
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to process password reset request",
+      error: error.message,
+    });
+  }
+};

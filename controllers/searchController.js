@@ -2,6 +2,7 @@ const Doctor = require("../models/Doctor");
 const Clinic = require("../models/Clinic");
 const Pharmacy = require("../models/Pharmacy");
 const Patient = require("../models/Patient");
+const Pathology = require("../models/Pathology"); // Import Pathology model
 
 // Helper to check if location params are present
 function hasLocationParams(query) {
@@ -94,6 +95,16 @@ exports.globalSearch = async (req, res) => {
       );
     }
 
+    // Search pathology labs
+    if (!type || type === "pathologies") {
+      results.pathologies = await searchModel(
+        Pathology,
+        ["name", "address.city", "servicesOffered", "testsOffered.name"],
+        {},
+        "-image.data"
+      );
+    }
+
     // Search patients (only if user has appropriate permissions)
     if (
       req.user &&
@@ -174,18 +185,23 @@ exports.searchByLocation = async (req, res) => {
       });
     }
 
+    if (!type || type === "pathologies") {
+      results.pathologies = await Pathology.find({
+        isActive: true,
+        ...locationQuery,
+      }).select("-image.data");
+    }
+
     // Validation: If all results are empty, return a message
     const totalResults = Object.values(results).reduce(
       (sum, arr) => sum + (arr ? arr.length : 0),
       0
     );
     if (totalResults === 0) {
-      return res
-        .status(404)
-        .json({
-          message: "No matching results found",
-          location: { city, state },
-        });
+      return res.status(404).json({
+        message: "No matching results found",
+        location: { city, state },
+      });
     }
 
     res.json({

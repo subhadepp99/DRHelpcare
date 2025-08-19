@@ -2,11 +2,27 @@ const Pharmacy = require("../models/Pharmacy");
 
 exports.createPharmacy = async (req, res) => {
   try {
-    const pharmacy = new Pharmacy({
-      ...req.body,
-      createdBy: req.user.id,
-    });
+    const pharmacyData = { ...req.body, createdBy: req.user.id };
 
+    // Parse address if it's a string
+    if (typeof pharmacyData.address === "string") {
+      pharmacyData.address = JSON.parse(pharmacyData.address);
+    }
+
+    // Handle location coordinates
+    if (pharmacyData.latitude && pharmacyData.longitude) {
+      pharmacyData.address.location = {
+        type: "Point",
+        coordinates: [
+          parseFloat(pharmacyData.longitude),
+          parseFloat(pharmacyData.latitude),
+        ],
+      };
+      delete pharmacyData.latitude;
+      delete pharmacyData.longitude;
+    }
+
+    const pharmacy = new Pharmacy(pharmacyData);
     await pharmacy.save();
 
     res.status(201).json({
@@ -16,11 +32,9 @@ exports.createPharmacy = async (req, res) => {
   } catch (error) {
     console.error(error);
     if (error.code === 11000) {
-      return res
-        .status(400)
-        .json({
-          message: "Pharmacy with this email or license number already exists",
-        });
+      return res.status(400).json({
+        message: "Pharmacy with this email or license number already exists",
+      });
     }
     res.status(500).json({ message: "Error creating pharmacy" });
   }
@@ -80,10 +94,38 @@ exports.getPharmacyById = async (req, res) => {
 
 exports.updatePharmacy = async (req, res) => {
   try {
-    const pharmacy = await Pharmacy.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    });
+    const updateData = { ...req.body };
+
+    // Parse address if it's a string
+    if (typeof updateData.address === "string") {
+      updateData.address = JSON.parse(updateData.address);
+    }
+
+    // Handle location coordinates
+    if (updateData.latitude && updateData.longitude) {
+      updateData.address.location = {
+        type: "Point",
+        coordinates: [
+          parseFloat(updateData.longitude),
+          parseFloat(updateData.latitude),
+        ],
+      };
+      delete updateData.latitude;
+      delete updateData.longitude;
+    } else if (updateData.latitude === null || updateData.longitude === null) {
+      updateData.$unset = { "address.location": 1 };
+      delete updateData.latitude;
+      delete updateData.longitude;
+    }
+
+    const pharmacy = await Pharmacy.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
 
     if (!pharmacy) {
       return res.status(404).json({ message: "Pharmacy not found" });

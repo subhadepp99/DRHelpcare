@@ -44,8 +44,8 @@ const userSchema = new mongoose.Schema(
       default: "user",
     },
     profileImage: {
-      type: String,
-      default: null,
+      data: Buffer,
+      contentType: String,
     },
     address: {
       street: String,
@@ -77,28 +77,15 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Password hashing middleware
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
-
-  try {
-    const salt = await bcrypt.genSalt(12);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Password comparison method
-userSchema.methods.comparePassword = async function (candidatePassword) {
-  return await bcrypt.compare(candidatePassword, this.password);
-};
-
 // Update last login
 userSchema.methods.updateLastLogin = function () {
   this.lastLogin = new Date();
   return this.save();
+};
+
+// Compare password
+userSchema.methods.comparePassword = async function (candidatePassword) {
+  return bcrypt.compare(candidatePassword, this.password);
 };
 
 module.exports = mongoose.model("User", userSchema);

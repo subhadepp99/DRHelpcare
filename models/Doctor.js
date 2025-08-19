@@ -59,8 +59,8 @@ const doctorSchema = new mongoose.Schema(
       min: 0,
     },
     image: {
-      type: String,
-      default: null,
+      data: Buffer,
+      contentType: String,
     },
     address: {
       street: String,
@@ -68,6 +68,17 @@ const doctorSchema = new mongoose.Schema(
       state: String,
       zipCode: String,
       country: { type: String, default: "India" },
+      location: {
+        type: {
+          type: String, // Don't do `{location: {type: String}}`.
+          enum: ["Point"], // 'location.type' must be 'Point'
+          default: "Point",
+        },
+        coordinates: {
+          type: [Number],
+          index: "2dsphere",
+        },
+      },
     },
     clinics: [
       {

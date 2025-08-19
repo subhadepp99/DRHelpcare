@@ -5,6 +5,24 @@ exports.createDoctor = async (req, res) => {
   try {
     const doctorData = { ...req.body, createdBy: req.user.id };
 
+    // Parse address if it's a string
+    if (typeof doctorData.address === "string") {
+      doctorData.address = JSON.parse(doctorData.address);
+    }
+
+    // Handle location coordinates
+    if (doctorData.latitude && doctorData.longitude) {
+      doctorData.address.location = {
+        type: "Point",
+        coordinates: [
+          parseFloat(doctorData.longitude),
+          parseFloat(doctorData.latitude),
+        ],
+      };
+      delete doctorData.latitude;
+      delete doctorData.longitude;
+    }
+
     // Support image upload via base64 photoUrl or file
     if (
       doctorData.photoUrl &&
@@ -159,6 +177,29 @@ exports.getDoctorImage = async (req, res) => {
 exports.updateDoctor = async (req, res) => {
   try {
     const updateData = { ...req.body };
+
+    // Parse address if it's a string
+    if (typeof updateData.address === "string") {
+      updateData.address = JSON.parse(updateData.address);
+    }
+
+    // Handle location coordinates
+    if (updateData.latitude && updateData.longitude) {
+      updateData.address.location = {
+        type: "Point",
+        coordinates: [
+          parseFloat(updateData.longitude),
+          parseFloat(updateData.latitude),
+        ],
+      };
+      delete updateData.latitude;
+      delete updateData.longitude;
+    } else if (updateData.latitude === null || updateData.longitude === null) {
+      // If location is explicitly set to null, remove the location field
+      updateData.$unset = { "address.location": 1 };
+      delete updateData.latitude;
+      delete updateData.longitude;
+    }
 
     // Handle image update from file upload or base64 photoUrl
     let imageUpdated = false;

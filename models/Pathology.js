@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-const pharmacySchema = new mongoose.Schema(
+const pathologySchema = new mongoose.Schema(
   {
     name: {
       type: String,
@@ -78,16 +78,19 @@ const pharmacySchema = new mongoose.Schema(
         isClosed: { type: Boolean, default: false },
       },
     },
-    services: [String],
-    medications: [
+    servicesOffered: [String],
+    testsOffered: [
       {
         name: String,
         category: String,
         price: Number,
-        availability: { type: Boolean, default: true },
+        requiresPrescription: { type: Boolean, default: false },
       },
     ],
-    image: String,
+    image: {
+      data: Buffer,
+      contentType: String,
+    },
     rating: {
       average: { type: Number, default: 0, min: 0, max: 5 },
       count: { type: Number, default: 0 },
@@ -119,10 +122,11 @@ const pharmacySchema = new mongoose.Schema(
 );
 
 // Search index
-pharmacySchema.index({
+pathologySchema.index({
   name: "text",
-  services: "text",
   "address.city": "text",
+  servicesOffered: "text",
+  "testsOffered.name": "text",
 });
 
-module.exports = mongoose.model("Pharmacy", pharmacySchema);
+module.exports = mongoose.model("Pathology", pathologySchema);
