@@ -53,11 +53,14 @@ const auth = async (req, res, next) => {
   }
 };
 
-// Admin authentication middleware
+// Admin authentication middleware (admin, superuser, masteruser)
 const adminAuth = async (req, res, next) => {
   try {
     await auth(req, res, () => {
-      if (!req.user || !["admin", "superuser"].includes(req.user.role)) {
+      if (
+        !req.user ||
+        !["admin", "superuser", "masteruser"].includes(req.user.role)
+      ) {
         return res.status(403).json({
           success: false,
           message: "Access denied. Admin privileges required.",
@@ -75,11 +78,11 @@ const adminAuth = async (req, res, next) => {
   }
 };
 
-// Superuser authentication middleware
+// Superuser authentication middleware (superuser, masteruser)
 const superuserAuth = async (req, res, next) => {
   try {
     await auth(req, res, () => {
-      if (!req.user || req.user.role !== "superuser") {
+      if (!req.user || !["superuser", "masteruser"].includes(req.user.role)) {
         return res.status(403).json({
           success: false,
           message: "Access denied. Superuser privileges required.",
@@ -89,6 +92,28 @@ const superuserAuth = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Superuser auth middleware error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Authentication failed.",
+      error: error.message,
+    });
+  }
+};
+
+// Masteruser authentication middleware (masteruser only)
+const masteruserAuth = async (req, res, next) => {
+  try {
+    await auth(req, res, () => {
+      if (!req.user || req.user.role !== "masteruser") {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Masteruser privileges required.",
+        });
+      }
+      next();
+    });
+  } catch (error) {
+    console.error("Masteruser auth middleware error:", error);
     res.status(500).json({
       success: false,
       message: "Authentication failed.",
@@ -131,5 +156,6 @@ module.exports = {
   auth,
   adminAuth,
   superuserAuth,
+  masteruserAuth,
   optionalAuth,
 };

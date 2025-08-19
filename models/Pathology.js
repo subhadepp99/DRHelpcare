@@ -9,8 +9,9 @@ const pathologySchema = new mongoose.Schema(
     },
     licenseNumber: {
       type: String,
-      required: true,
+      required: false, // Made optional
       unique: true,
+      sparse: true, // Allow multiple null values
     },
     email: {
       type: String,
@@ -24,22 +25,28 @@ const pathologySchema = new mongoose.Schema(
       required: true,
     },
     address: {
-      street: { type: String, required: true },
-      city: { type: String, required: true },
-      state: { type: String, required: true },
-      zipCode: { type: String, required: true },
-      country: { type: String, default: "India" },
-      location: {
-        type: {
-          type: String,
-          enum: ["Point"],
-          default: "Point",
-        },
-        coordinates: {
-          type: [Number],
-          index: "2dsphere",
-        },
-      },
+      type: String,
+      required: true,
+    },
+    place: {
+      type: String,
+      required: true,
+    },
+    state: {
+      type: String,
+      required: true,
+    },
+    zipCode: {
+      type: String,
+      required: true,
+    },
+    country: {
+      type: String,
+      default: "India",
+    },
+    coordinates: {
+      type: [Number], // [longitude, latitude]
+      index: "2dsphere",
     },
     operatingHours: {
       monday: {
@@ -84,13 +91,31 @@ const pathologySchema = new mongoose.Schema(
         name: String,
         category: String,
         price: Number,
+        discountedPrice: Number,
+        discountType: {
+          type: String,
+          enum: ["percentage", "flat"],
+          default: "flat",
+        },
+        discountValue: Number, // percentage or flat amount
         requiresPrescription: { type: Boolean, default: false },
+        image: {
+          data: Buffer,
+          contentType: String,
+        },
+        imageUrl: String,
+        description: String,
+        preparationInstructions: String,
+        reportTime: String, // e.g., "24 hours", "Same day"
+        isHomeCollection: { type: Boolean, default: false },
+        homeCollectionFee: { type: Number, default: 0 },
       },
     ],
     image: {
       data: Buffer,
       contentType: String,
     },
+    imageUrl: String,
     rating: {
       average: { type: Number, default: 0, min: 0, max: 5 },
       count: { type: Number, default: 0 },
@@ -114,6 +139,15 @@ const pathologySchema = new mongoose.Schema(
     is24Hours: {
       type: Boolean,
       default: false,
+    },
+    homeCollection: {
+      available: { type: Boolean, default: false },
+      fee: { type: Number, default: 0 },
+      areas: [String], // Areas where home collection is available
+      timing: {
+        start: String,
+        end: String,
+      },
     },
   },
   {

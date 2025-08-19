@@ -40,7 +40,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["user", "admin", "superuser"],
+      enum: ["user", "admin", "superuser", "masteruser"],
       default: "user",
     },
     profileImage: {
@@ -70,6 +70,26 @@ const userSchema = new mongoose.Schema(
         sms: { type: Boolean, default: true },
       },
       theme: { type: String, default: "light" },
+    },
+    // Access request fields
+    accessRequest: {
+      requestedRole: {
+        type: String,
+        enum: ["admin", "superuser", "masteruser"],
+      },
+      status: {
+        type: String,
+        enum: ["pending", "approved", "rejected"],
+        default: "pending",
+      },
+      requestedAt: Date,
+      reviewedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      reviewedAt: Date,
+      reason: String,
+      rejectionReason: String,
     },
   },
   {

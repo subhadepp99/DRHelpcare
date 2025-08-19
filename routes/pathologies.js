@@ -1,45 +1,155 @@
 const express = require("express");
+const Pathology = require("../models/Pathology");
 const { auth, adminAuth } = require("../middleware/auth");
-const upload = require("../middleware/uploadMiddleware"); // Use the shared upload middleware
-const pathologyController = require("../controllers/pathologyController");
 
 const router = express.Router();
 
-// Get all pathology labs
-router.get("/", pathologyController.getAllPathologies);
+// Get all pathologies (admin and above only)
+router.get("/", adminAuth, async (req, res) => {
+  try {
+    const { page = 1, limit = 100, search = "" } = req.query;
+    const skip = (page - 1) * limit;
 
-// Get single pathology lab
-router.get("/:id", pathologyController.getPathologyById);
+    let query = {};
+    if (search) {
+      query.$or = [
+        { name: new RegExp(search, "i") },
+        { place: new RegExp(search, "i") },
+        { state: new RegExp(search, "i") },
+      ];
+    }
 
-// Create new pathology lab (Admin only)
-router.post(
-  "/",
-  adminAuth,
-  upload.single("image"),
-  pathologyController.createPathology
-);
+    const [pathologies, total] = await Promise.all([
+      Pathology.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      Pathology.countDocuments(query),
+    ]);
 
-// Update pathology lab (Admin only)
-router.put(
-  "/:id",
-  adminAuth,
-  upload.single("image"),
-  pathologyController.updatePathology
-);
+    res.json({
+      success: true,
+      data: {
+        pathologies,
+        pagination: {
+          current: parseInt(page),
+          total: Math.ceil(total / limit),
+          totalItems: total,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Get pathologies error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch pathologies",
+      error: error.message,
+    });
+  }
+});
 
-// Deactivate pathology lab (Admin only)
-router.delete("/:id", adminAuth, pathologyController.deletePathology);
+// Get pathology by ID (admin and above only)
+router.get("/:id", adminAuth, async (req, res) => {
+  try {
+    const pathology = await Pathology.findById(req.params.id);
 
-// Get pathology lab image
-router.get("/:id/image", pathologyController.getPathologyImage);
+    if (!pathology) {
+      return res.status(404).json({
+        success: false,
+        message: "Pathology not found",
+      });
+    }
 
-// Add review to pathology lab
-router.post("/:id/reviews", auth, pathologyController.addReview);
+    res.json({
+      success: true,
+      data: pathology,
+    });
+  } catch (error) {
+    console.error("Get pathology error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch pathology",
+      error: error.message,
+    });
+  }
+});
 
-// Search tests offered by pathology lab
-router.get("/:id/tests", pathologyController.searchTests);
+// Create new pathology (admin and above only)
+router.post("/", adminAuth, async (req, res) => {
+  try {
+    const pathology = new Pathology(req.body);
+    await pathology.save();
 
-// Add test to pathology lab
-router.post("/:id/tests", adminAuth, pathologyController.addTest);
+    res.status(201).json({
+      success: true,
+      message: "Pathology created successfully",
+      data: pathology,
+    });
+  } catch (error) {
+    console.error("Create pathology error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to create pathology",
+      error: error.message,
+    });
+  }
+});
+
+// Update pathology (admin and above only)
+router.put("/:id", adminAuth, async (req, res) => {
+  try {
+    const pathology = await Pathology.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true, runValidators: true }
+    );
+
+    if (!pathology) {
+      return res.status(404).json({
+        success: false,
+        message: "Pathology not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Pathology updated successfully",
+      data: pathology,
+    });
+  } catch (error) {
+    console.error("Update pathology error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update pathology",
+      error: error.message,
+    });
+  }
+});
+
+// Delete pathology (admin and above only)
+router.delete("/:id", adminAuth, async (req, res) => {
+  try {
+    const pathology = await Pathology.findByIdAndDelete(req.params.id);
+
+    if (!pathology) {
+      return res.status(404).json({
+        success: false,
+        message: "Pathology not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Pathology deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete pathology error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete pathology",
+      error: error.message,
+    });
+  }
+});
 
 module.exports = router;

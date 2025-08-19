@@ -9,8 +9,9 @@ const clinicSchema = new mongoose.Schema(
     },
     registrationNumber: {
       type: String,
-      required: true,
+      required: false, // Made optional
       unique: true,
+      sparse: true, // Allow multiple null values
     },
     email: {
       type: String,
@@ -24,15 +25,28 @@ const clinicSchema = new mongoose.Schema(
       required: true,
     },
     address: {
-      street: { type: String, required: true },
-      city: { type: String, required: true },
-      state: { type: String, required: true },
-      zipCode: { type: String, required: true },
-      country: { type: String, default: "India" },
-      coordinates: {
-        type: [Number], // [longitude, latitude]
-        index: "2dsphere",
-      },
+      type: String,
+      required: true,
+    },
+    place: {
+      type: String,
+      required: true,
+    },
+    state: {
+      type: String,
+      required: true,
+    },
+    zipCode: {
+      type: String,
+      required: true,
+    },
+    country: {
+      type: String,
+      default: "India",
+    },
+    coordinates: {
+      type: [Number], // [longitude, latitude]
+      index: "2dsphere",
     },
     operatingHours: {
       monday: {
@@ -81,6 +95,7 @@ const clinicSchema = new mongoose.Schema(
     ],
     image: String,
     images: [String],
+    imageUrl: String, // Public URL for clinic image
     rating: {
       average: { type: Number, default: 0, min: 0, max: 5 },
       count: { type: Number, default: 0 },

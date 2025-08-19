@@ -58,6 +58,7 @@ app.use("/api/pathologies", require("./routes/pathologies"));
 app.use("/api/search", require("./routes/search"));
 app.use("/api/dashboard", require("./routes/dashboard"));
 app.use("/api/department", require("./routes/department")); // Corrected path from 'departments'
+app.use("/api/access-requests", require("./routes/accessRequests"));
 
 // Health check endpoint
 app.get("/api/health", (req, res) => {

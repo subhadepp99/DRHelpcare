@@ -62,6 +62,7 @@ const doctorSchema = new mongoose.Schema(
       data: Buffer,
       contentType: String,
     },
+    imageUrl: String, // Public URL for doctor image
     address: {
       street: String,
       city: String,

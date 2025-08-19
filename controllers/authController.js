@@ -144,50 +144,62 @@ exports.register = async (req, res) => {
 // Login user
 exports.login = async (req, res) => {
   try {
-    const { identifier, email, username, phone, password } = req.body;
-    const authIdentifier = identifier || email || username || phone;
+    // Ensure body is an object
+    const body =
+      req && req.body && typeof req.body === "object" ? req.body : {};
 
-    if (!authIdentifier || !password) {
+    // Support multiple shapes but prefer flat payload
+    const identifier =
+      body.identifier ??
+      body.email ??
+      body.username ??
+      body.phone ??
+      body?.data?.identifier ??
+      req.query?.identifier;
+    const password =
+      body.password ?? body?.data?.password ?? req.query?.password;
+
+    if (!identifier || !password) {
       return res.status(400).json({
         success: false,
         message: "Email/username/phone and password are required",
       });
     }
 
+    const ident = String(identifier).trim();
+
     // Find user by email, username, or phone
     const user = await User.findOne({
       $or: [
-        { email: authIdentifier.toLowerCase() },
-        { username: authIdentifier.toLowerCase() },
-        { phone: authIdentifier },
+        { email: ident.toLowerCase() },
+        { username: ident.toLowerCase() },
+        { phone: ident },
       ],
       isActive: true,
     });
 
     if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
     }
 
-    // Check password
+    // Validate password
     const isValidPassword = await user.comparePassword(password);
     if (!isValidPassword) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
     }
 
     // Update last login
     await user.updateLastLogin();
 
-    // Generate tokens
+    // Tokens
     const token = generateToken(user._id);
     const refreshToken = generateRefreshToken(user._id);
 
-    // Create activity log
+    // Activity log
     await createActivity({
       type:
         user.role === "admin" || user.role === "superuser"
@@ -201,26 +213,20 @@ exports.login = async (req, res) => {
       userAgent: req.get("User-Agent"),
     });
 
-    // Remove password from response
+    // Prepare response user
     const userResponse = user.toObject();
     delete userResponse.password;
 
-    res.json({
+    return res.json({
       success: true,
       message: "Login successful",
-      data: {
-        user: userResponse,
-        token,
-        refreshToken,
-      },
+      data: { user: userResponse, token, refreshToken },
     });
   } catch (error) {
     console.error("Login error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Login failed",
-      error: error.message,
-    });
+    return res
+      .status(500)
+      .json({ success: false, message: "Login failed", error: error.message });
   }
 };
 

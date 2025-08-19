@@ -9,8 +9,9 @@ const pharmacySchema = new mongoose.Schema(
     },
     licenseNumber: {
       type: String,
-      required: true,
+      required: false, // Made optional
       unique: true,
+      sparse: true, // Allow multiple null values
     },
     email: {
       type: String,
@@ -24,22 +25,28 @@ const pharmacySchema = new mongoose.Schema(
       required: true,
     },
     address: {
-      street: { type: String, required: true },
-      city: { type: String, required: true },
-      state: { type: String, required: true },
-      zipCode: { type: String, required: true },
-      country: { type: String, default: "India" },
-      location: {
-        type: {
-          type: String,
-          enum: ["Point"],
-          default: "Point",
-        },
-        coordinates: {
-          type: [Number],
-          index: "2dsphere",
-        },
-      },
+      type: String,
+      required: true,
+    },
+    place: {
+      type: String,
+      required: true,
+    },
+    state: {
+      type: String,
+      required: true,
+    },
+    zipCode: {
+      type: String,
+      required: true,
+    },
+    country: {
+      type: String,
+      default: "India",
+    },
+    coordinates: {
+      type: [Number], // [longitude, latitude]
+      index: "2dsphere",
     },
     operatingHours: {
       monday: {
@@ -88,6 +95,7 @@ const pharmacySchema = new mongoose.Schema(
       },
     ],
     image: String,
+    imageUrl: String, // Public URL for pharmacy image
     rating: {
       average: { type: Number, default: 0, min: 0, max: 5 },
       count: { type: Number, default: 0 },

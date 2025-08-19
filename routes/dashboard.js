@@ -5,13 +5,27 @@ const Pharmacy = require("../models/Pharmacy");
 const User = require("../models/User");
 const Booking = require("../models/Booking");
 const Activity = require("../models/Activity");
+const Pathology = require("../models/Pathology");
+const Department = require("../models/Department");
 const { auth, adminAuth } = require("../middleware/auth");
 
 const router = express.Router();
 
-// Get dashboard statistics
+// Get dashboard statistics with real-time data
 router.get("/stats", adminAuth, async (req, res) => {
   try {
+    const { period = "monthly" } = req.query;
+    const now = new Date();
+    let dateRange;
+
+    if (period === "weekly") {
+      dateRange = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    } else if (period === "monthly") {
+      dateRange = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else {
+      dateRange = new Date(now.getFullYear(), 0, 1); // Start of year
+    }
+
     const [
       totalDoctors,
       totalClinics,
@@ -21,6 +35,14 @@ router.get("/stats", adminAuth, async (req, res) => {
       totalBookings,
       completedBookings,
       pendingBookings,
+      totalPathologies,
+      totalDepartments,
+      // Period-specific counts
+      periodDoctors,
+      periodClinics,
+      periodPharmacies,
+      periodPatients,
+      periodBookings,
     ] = await Promise.all([
       Doctor.countDocuments({ isActive: true }),
       Clinic.countDocuments({ isActive: true }),
@@ -30,9 +52,32 @@ router.get("/stats", adminAuth, async (req, res) => {
       Booking.countDocuments(),
       Booking.countDocuments({ status: "completed" }),
       Booking.countDocuments({ status: "pending" }),
+      Pathology.countDocuments({ isActive: true }),
+      Department.countDocuments({ isActive: true }),
+      // Period-specific counts
+      Doctor.countDocuments({
+        isActive: true,
+        createdAt: { $gte: dateRange },
+      }),
+      Clinic.countDocuments({
+        isActive: true,
+        createdAt: { $gte: dateRange },
+      }),
+      Pharmacy.countDocuments({
+        isActive: true,
+        createdAt: { $gte: dateRange },
+      }),
+      User.countDocuments({
+        role: "user",
+        isActive: true,
+        createdAt: { $gte: dateRange },
+      }),
+      Booking.countDocuments({
+        createdAt: { $gte: dateRange },
+      }),
     ]);
 
-    // Calculate growth percentages (mock data for demo)
+    // Calculate growth percentages
     const stats = {
       totalDoctors,
       totalClinics,
@@ -42,12 +87,36 @@ router.get("/stats", adminAuth, async (req, res) => {
       totalBookings,
       completedBookings,
       pendingBookings,
+      totalPathologies,
+      totalDepartments,
+      periodStats: {
+        doctors: periodDoctors,
+        clinics: periodClinics,
+        pharmacies: periodPharmacies,
+        patients: periodPatients,
+        bookings: periodBookings,
+      },
       growth: {
-        doctors: 12,
-        clinics: 8,
-        pharmacies: 15,
-        patients: 23,
-        bookings: 18,
+        doctors:
+          totalDoctors > 0
+            ? Math.round((periodDoctors / totalDoctors) * 100)
+            : 0,
+        clinics:
+          totalClinics > 0
+            ? Math.round((periodClinics / totalClinics) * 100)
+            : 0,
+        pharmacies:
+          totalPharmacies > 0
+            ? Math.round((periodPharmacies / totalPharmacies) * 100)
+            : 0,
+        patients:
+          totalPatients > 0
+            ? Math.round((periodPatients / totalPatients) * 100)
+            : 0,
+        bookings:
+          totalBookings > 0
+            ? Math.round((periodBookings / totalBookings) * 100)
+            : 0,
       },
     };
 
@@ -60,6 +129,86 @@ router.get("/stats", adminAuth, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch dashboard statistics",
+      error: error.message,
+    });
+  }
+});
+
+// Get real-time activity feed
+router.get("/realtime-activity", adminAuth, async (req, res) => {
+  try {
+    const { limit = 20 } = req.query;
+
+    const activities = await Activity.find()
+      .populate("user", "firstName lastName username role")
+      .populate("targetId")
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit));
+
+    const formattedActivities = activities.map((activity) => ({
+      id: activity._id,
+      type: activity.type,
+      message: activity.message,
+      user: activity.user
+        ? {
+            name: `${activity.user.firstName} ${activity.user.lastName}`,
+            username: activity.user.username,
+            role: activity.user.role,
+          }
+        : null,
+      targetModel: activity.targetModel,
+      timestamp: activity.createdAt,
+      ipAddress: activity.ipAddress,
+    }));
+
+    res.json({
+      success: true,
+      data: { activities: formattedActivities },
+    });
+  } catch (error) {
+    console.error("Real-time activity error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch real-time activity",
+      error: error.message,
+    });
+  }
+});
+
+// Get department statistics
+router.get("/departments", adminAuth, async (req, res) => {
+  try {
+    const departments = await Department.aggregate([
+      { $match: { isActive: true } },
+      {
+        $lookup: {
+          from: "doctors",
+          localField: "_id",
+          foreignField: "department",
+          as: "doctors",
+        },
+      },
+      {
+        $project: {
+          name: 1,
+          heading: 1,
+          doctorCount: { $size: "$doctors" },
+          isActive: 1,
+          createdAt: 1,
+        },
+      },
+      { $sort: { doctorCount: -1 } },
+    ]);
+
+    res.json({
+      success: true,
+      data: { departments },
+    });
+  } catch (error) {
+    console.error("Department stats error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch department statistics",
       error: error.message,
     });
   }
