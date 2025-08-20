@@ -199,6 +199,12 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
     // Add image path if uploaded
     if (req.file) {
       doctorData.image = `/uploads/doctors/${req.file.filename}`;
+      doctorData.imageUrl = `/uploads/doctors/${req.file.filename}`;
+    }
+
+    // Add imageUrl if provided in body
+    if (req.body.imageUrl) {
+      doctorData.imageUrl = req.body.imageUrl;
     }
 
     const doctor = new Doctor(doctorData);
@@ -288,6 +294,12 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       }
 
       updates.image = `/uploads/doctors/${req.file.filename}`;
+      updates.imageUrl = `/uploads/doctors/${req.file.filename}`;
+    }
+
+    // Add imageUrl if provided in body
+    if (req.body.imageUrl) {
+      updates.imageUrl = req.body.imageUrl;
     }
 
     const updatedDoctor = await Doctor.findByIdAndUpdate(doctorId, updates, {

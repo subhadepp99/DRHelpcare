@@ -152,9 +152,14 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       email,
       phone,
       address,
+      place,
+      state,
+      zipCode,
+      country,
       operatingHours,
       services = [],
       is24Hours = false,
+      imageUrl,
     } = req.body;
 
     // Check if pharmacy already exists
@@ -169,26 +174,30 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       });
     }
 
-    // Parse JSON strings if needed
-    const parsedAddress =
-      typeof address === "string" ? JSON.parse(address) : address;
-    const parsedOperatingHours =
-      typeof operatingHours === "string"
-        ? JSON.parse(operatingHours)
-        : operatingHours;
-    const parsedServices =
-      typeof services === "string" ? JSON.parse(services) : services;
+    // Parse arrays if they are strings
+    const parsedServices = Array.isArray(services)
+      ? services
+      : typeof services === "string"
+      ? services
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
 
     // Create pharmacy object
     const pharmacyData = {
       name,
-      licenseNumber,
+      licenseNumber: licenseNumber || undefined,
       email,
       phone,
-      address: parsedAddress,
-      operatingHours: parsedOperatingHours,
+      address,
+      place,
+      state,
+      zipCode,
+      country,
       services: parsedServices,
       is24Hours: is24Hours === "true" || is24Hours === true,
+      imageUrl,
     };
 
     // Add image path if uploaded
@@ -239,15 +248,12 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
     const pharmacyId = req.params.id;
     const updates = { ...req.body };
 
-    // Parse JSON strings if needed
-    if (updates.address && typeof updates.address === "string") {
-      updates.address = JSON.parse(updates.address);
-    }
-    if (updates.operatingHours && typeof updates.operatingHours === "string") {
-      updates.operatingHours = JSON.parse(updates.operatingHours);
-    }
+    // Parse arrays if they are strings
     if (updates.services && typeof updates.services === "string") {
-      updates.services = JSON.parse(updates.services);
+      updates.services = updates.services
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
     }
 
     // Convert boolean string

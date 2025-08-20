@@ -158,10 +158,15 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       email,
       phone,
       address,
+      place,
+      state,
+      zipCode,
+      country,
       operatingHours,
       services = [],
       facilities = [],
       type = "clinic",
+      imageUrl,
     } = req.body;
 
     // Check if clinic already exists
@@ -176,29 +181,39 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       });
     }
 
-    // Parse JSON strings if needed
-    const parsedAddress =
-      typeof address === "string" ? JSON.parse(address) : address;
-    const parsedOperatingHours =
-      typeof operatingHours === "string"
-        ? JSON.parse(operatingHours)
-        : operatingHours;
-    const parsedServices =
-      typeof services === "string" ? JSON.parse(services) : services;
-    const parsedFacilities =
-      typeof facilities === "string" ? JSON.parse(facilities) : facilities;
+    // Parse arrays if they are strings
+    const parsedServices = Array.isArray(services)
+      ? services
+      : typeof services === "string"
+      ? services
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+    const parsedFacilities = Array.isArray(facilities)
+      ? facilities
+      : typeof facilities === "string"
+      ? facilities
+          .split(",")
+          .map((f) => f.trim())
+          .filter(Boolean)
+      : [];
 
     // Create clinic object
     const clinicData = {
       name,
-      registrationNumber,
+      registrationNumber: registrationNumber || undefined,
       email,
       phone,
-      address: parsedAddress,
-      operatingHours: parsedOperatingHours,
+      address,
+      place,
+      state,
+      zipCode,
+      country,
       services: parsedServices,
       facilities: parsedFacilities,
       type,
+      imageUrl,
     };
 
     // Add image path if uploaded
@@ -249,18 +264,18 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
     const clinicId = req.params.id;
     const updates = { ...req.body };
 
-    // Parse JSON strings if needed
-    if (updates.address && typeof updates.address === "string") {
-      updates.address = JSON.parse(updates.address);
-    }
-    if (updates.operatingHours && typeof updates.operatingHours === "string") {
-      updates.operatingHours = JSON.parse(updates.operatingHours);
-    }
+    // Parse arrays if they are strings
     if (updates.services && typeof updates.services === "string") {
-      updates.services = JSON.parse(updates.services);
+      updates.services = updates.services
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
     }
     if (updates.facilities && typeof updates.facilities === "string") {
-      updates.facilities = JSON.parse(updates.facilities);
+      updates.facilities = updates.facilities
+        .split(",")
+        .map((f) => f.trim())
+        .filter(Boolean);
     }
 
     const clinic = await Clinic.findById(clinicId);
