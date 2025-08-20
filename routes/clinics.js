@@ -219,6 +219,7 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
     // Add image path if uploaded
     if (req.file) {
       clinicData.image = `/uploads/clinics/${req.file.filename}`;
+      clinicData.imageUrl = `/uploads/clinics/${req.file.filename}`; // Set imageUrl for public access
     }
 
     const clinic = new Clinic(clinicData);
@@ -306,6 +307,7 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       }
 
       updates.image = `/uploads/clinics/${req.file.filename}`;
+      updates.imageUrl = `/uploads/clinics/${req.file.filename}`; // Set imageUrl for public access
     }
 
     const updatedClinic = await Clinic.findByIdAndUpdate(clinicId, updates, {

@@ -1,8 +1,102 @@
 const express = require("express");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs").promises;
 const Department = require("../models/Department");
-const { auth, adminAuth } = require("../middleware/auth");
+const { auth, adminAuth, superuserAuth } = require("../middleware/auth");
 
 const router = express.Router();
+
+// Configure multer for image uploads
+const storage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    const uploadPath = path.join(__dirname, "..", "uploads", "departments");
+    try {
+      await fs.mkdir(uploadPath, { recursive: true });
+      cb(null, uploadPath);
+    } catch (error) {
+      cb(error, null);
+    }
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(
+      null,
+      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname)
+    );
+  },
+});
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif/;
+    const extname = allowedTypes.test(
+      path.extname(file.originalname).toLowerCase()
+    );
+    const mimetype = allowedTypes.test(file.mimetype);
+
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb(new Error("Only image files are allowed!"), false);
+    }
+  },
+});
+
+// Get all departments (public route for homepage)
+router.get("/public", async (req, res) => {
+  try {
+    const { page = 1, limit = 100, search = "" } = req.query;
+    const skip = (page - 1) * limit;
+
+    let query = { isActive: true }; // Only active departments
+    if (search) {
+      query.$or = [
+        { name: new RegExp(search, "i") },
+        { heading: new RegExp(search, "i") },
+        { specialization: new RegExp(search, "i") },
+      ];
+    }
+
+    const [departments, total] = await Promise.all([
+      Department.find(query)
+        .populate("doctors", "name specialization")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      Department.countDocuments(query),
+    ]);
+
+    // Add doctor count to each department
+    const departmentsWithCount = departments.map((dept) => ({
+      ...dept.toObject(),
+      doctorCount: dept.doctors ? dept.doctors.length : 0,
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        departments: departmentsWithCount,
+        pagination: {
+          current: parseInt(page),
+          total: Math.ceil(total / limit),
+          totalItems: total,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Get public departments error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch departments",
+      error: error.message,
+    });
+  }
+});
 
 // Get all departments (admin and above only)
 router.get("/", adminAuth, async (req, res) => {
@@ -31,7 +125,7 @@ router.get("/", adminAuth, async (req, res) => {
     // Add doctor count to each department
     const departmentsWithCount = departments.map((dept) => ({
       ...dept.toObject(),
-      doctorCount: dept.doctors.length,
+      doctorCount: dept.doctors ? dept.doctors.length : 0,
     }));
 
     res.json({
@@ -85,9 +179,24 @@ router.get("/:id", adminAuth, async (req, res) => {
 });
 
 // Create new department (admin and above only)
-router.post("/", adminAuth, async (req, res) => {
+router.post("/", adminAuth, upload.single("image"), async (req, res) => {
   try {
-    const department = new Department(req.body);
+    // Ensure department name starts with capital letter
+    const departmentData = {
+      ...req.body,
+      name: req.body.name.charAt(0).toUpperCase() + req.body.name.slice(1),
+    };
+
+    // Add image path if uploaded
+    if (req.file) {
+      departmentData.image = `/uploads/departments/${req.file.filename}`;
+      departmentData.imageUrl = `/uploads/departments/${req.file.filename}`;
+    } else if (req.body.imageUrl) {
+      // If no file uploaded but imageUrl provided in body
+      departmentData.imageUrl = req.body.imageUrl;
+    }
+
+    const department = new Department(departmentData);
     await department.save();
 
     res.status(201).json({
@@ -97,6 +206,16 @@ router.post("/", adminAuth, async (req, res) => {
     });
   } catch (error) {
     console.error("Create department error:", error);
+
+    // Clean up uploaded file if error occurred
+    if (req.file) {
+      try {
+        await fs.unlink(req.file.path);
+      } catch (unlinkError) {
+        console.error("Failed to delete uploaded file:", unlinkError);
+      }
+    }
+
     res.status(500).json({
       success: false,
       message: "Failed to create department",
@@ -106,14 +225,15 @@ router.post("/", adminAuth, async (req, res) => {
 });
 
 // Update department (admin and above only)
-router.put("/:id", adminAuth, async (req, res) => {
+router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
   try {
-    const department = await Department.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true, runValidators: true }
-    );
+    // Ensure department name starts with capital letter
+    const updateData = {
+      ...req.body,
+      name: req.body.name.charAt(0).toUpperCase() + req.body.name.slice(1),
+    };
 
+    const department = await Department.findById(req.params.id);
     if (!department) {
       return res.status(404).json({
         success: false,
@@ -121,13 +241,51 @@ router.put("/:id", adminAuth, async (req, res) => {
       });
     }
 
+    // Handle image update
+    if (req.file) {
+      // Delete old image if exists
+      if (department.image && department.image.startsWith("/uploads/")) {
+        const oldImagePath = path.join(
+          __dirname,
+          "..",
+          department.image.replace("/uploads/", "uploads/")
+        );
+        try {
+          await fs.unlink(oldImagePath);
+        } catch (error) {
+          console.error("Failed to delete old image:", error);
+        }
+      }
+      updateData.image = `/uploads/departments/${req.file.filename}`;
+      updateData.imageUrl = `/uploads/departments/${req.file.filename}`;
+    } else if (req.body.imageUrl) {
+      // If no file uploaded but imageUrl provided in body
+      updateData.imageUrl = req.body.imageUrl;
+    }
+
+    const updatedDepartment = await Department.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true, runValidators: true }
+    );
+
     res.json({
       success: true,
       message: "Department updated successfully",
-      data: department,
+      data: updatedDepartment,
     });
   } catch (error) {
     console.error("Update department error:", error);
+
+    // Clean up uploaded file if error occurred
+    if (req.file) {
+      try {
+        await fs.unlink(req.file.path);
+      } catch (unlinkError) {
+        console.error("Failed to delete uploaded file:", unlinkError);
+      }
+    }
+
     res.status(500).json({
       success: false,
       message: "Failed to update department",

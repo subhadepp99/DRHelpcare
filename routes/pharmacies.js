@@ -203,6 +203,7 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
     // Add image path if uploaded
     if (req.file) {
       pharmacyData.image = `/uploads/pharmacies/${req.file.filename}`;
+      pharmacyData.imageUrl = `/uploads/pharmacies/${req.file.filename}`; // Set imageUrl for public access
     }
 
     const pharmacy = new Pharmacy(pharmacyData);
@@ -290,6 +291,7 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       }
 
       updates.image = `/uploads/pharmacies/${req.file.filename}`;
+      updates.imageUrl = `/uploads/pharmacies/${req.file.filename}`; // Set imageUrl for public access
     }
 
     const updatedPharmacy = await Pharmacy.findByIdAndUpdate(

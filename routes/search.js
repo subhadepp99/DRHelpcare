@@ -6,9 +6,17 @@ const Pharmacy = require("../models/Pharmacy");
 const router = express.Router();
 
 function matchesText(doc, q, fields) {
-  const kw = q.toLowerCase();
-  return fields.some(
-    (f) => typeof doc[f] === "string" && doc[f].toLowerCase().includes(kw)
+  if (!q || q.trim() === "") return true;
+
+  // Split query into words for wildcard search
+  const keywords = q.toLowerCase().trim().split(/\s+/);
+
+  // Return true if ANY keyword matches ANY field (more flexible search)
+  return keywords.some((keyword) =>
+    fields.some((field) => {
+      if (typeof doc[field] !== "string") return false;
+      return doc[field].toLowerCase().includes(keyword);
+    })
   );
 }
 
@@ -28,6 +36,14 @@ router.get("/", async (req, res) => {
       limit = 20,
       page = 1,
     } = req.query;
+
+    // Check minimum character requirement for search
+    if (q && q.trim().length < 3) {
+      return res.status(400).json({
+        success: false,
+        message: "Search query must be at least 3 characters long",
+      });
+    }
 
     const skip = (page - 1) * limit;
     const results = {};
@@ -74,6 +90,7 @@ router.get("/", async (req, res) => {
         // Geo first, then manual text search
         doctors = await Doctor.find(baseQuery)
           .select("-reviews -__v")
+          .populate("department", "name")
           .limit(lim * 5) // get extra for manual filtering
           .lean();
 
@@ -82,15 +99,31 @@ router.get("/", async (req, res) => {
           .slice(0, lim);
       } else if (q) {
         // Text search only
-        doctors = await Doctor.find({ $text: { $search: q }, ...baseQuery })
-          .select("-reviews -__v")
-          .limit(lim)
-          .skip(skip)
-          .sort({ score: { $meta: "textScore" } });
+        try {
+          doctors = await Doctor.find({ $text: { $search: q }, ...baseQuery })
+            .select("-reviews -__v")
+            .populate("department", "name")
+            .limit(lim)
+            .skip(skip)
+            .sort({ score: { $meta: "textScore" } });
+        } catch (error) {
+          // Fallback to manual search if text index fails
+          doctors = await Doctor.find(baseQuery)
+            .select("-reviews -__v")
+            .populate("department", "name")
+            .limit(lim * 2)
+            .skip(skip)
+            .lean();
+
+          doctors = doctors
+            .filter((d) => matchesText(d, q, ["name", "specialization"]))
+            .slice(0, lim);
+        }
       } else {
         // Just geo or no q
         doctors = await Doctor.find(baseQuery)
           .select("-reviews -__v")
+          .populate("department", "name")
           .limit(lim)
           .skip(skip)
           .sort({ "rating.average": -1 });
@@ -113,12 +146,26 @@ router.get("/", async (req, res) => {
           .filter((cl) => matchesText(cl, q, ["name"]))
           .slice(0, lim);
       } else if (q) {
-        clinics = await Clinic.find({ $text: { $search: q }, ...baseQuery })
-          .select("-reviews -__v")
-          .populate("doctors", "name specialization")
-          .limit(lim)
-          .skip(skip)
-          .sort({ score: { $meta: "textScore" } });
+        try {
+          clinics = await Clinic.find({ $text: { $search: q }, ...baseQuery })
+            .select("-reviews -__v")
+            .populate("doctors", "name specialization")
+            .limit(lim)
+            .skip(skip)
+            .sort({ score: { $meta: "textScore" } });
+        } catch (error) {
+          // Fallback to manual search if text index fails
+          clinics = await Clinic.find(baseQuery)
+            .select("-reviews -__v")
+            .populate("doctors", "name specialization")
+            .limit(lim * 2)
+            .skip(skip)
+            .lean();
+
+          clinics = clinics
+            .filter((cl) => matchesText(cl, q, ["name"]))
+            .slice(0, lim);
+        }
       } else {
         clinics = await Clinic.find(baseQuery)
           .select("-reviews -__v")
@@ -144,14 +191,27 @@ router.get("/", async (req, res) => {
           .filter((ph) => matchesText(ph, q, ["name"]))
           .slice(0, lim);
       } else if (q) {
-        pharmacies = await Pharmacy.find({
-          $text: { $search: q },
-          ...baseQuery,
-        })
-          .select("-reviews -medications -__v")
-          .limit(lim)
-          .skip(skip)
-          .sort({ score: { $meta: "textScore" } });
+        try {
+          pharmacies = await Pharmacy.find({
+            $text: { $search: q },
+            ...baseQuery,
+          })
+            .select("-reviews -medications -__v")
+            .limit(lim)
+            .skip(skip)
+            .sort({ score: { $meta: "textScore" } });
+        } catch (error) {
+          // Fallback to manual search if text index fails
+          pharmacies = await Pharmacy.find(baseQuery)
+            .select("-reviews -medications -__v")
+            .limit(lim * 2)
+            .skip(skip)
+            .lean();
+
+          pharmacies = pharmacies
+            .filter((ph) => matchesText(ph, q, ["name"]))
+            .slice(0, lim);
+        }
       } else {
         pharmacies = await Pharmacy.find(baseQuery)
           .select("-reviews -medications -__v")

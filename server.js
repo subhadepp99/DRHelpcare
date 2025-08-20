@@ -3,6 +3,7 @@ const cors = require("cors");
 const morgan = require("morgan");
 const dotenv = require("dotenv");
 const connectDB = require("./config/database");
+const path = require("path"); // Added for path.join
 
 // Load environment variables
 dotenv.config();
@@ -16,6 +17,9 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(morgan("combined"));
+
+// Serve static files for uploads
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Define allowed origins
 const allowedOrigins = [
@@ -48,17 +52,18 @@ app.options("*", cors(corsOptions));
 // Routes
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/users", require("./routes/users"));
+app.use("/api/patients", require("./routes/patients"));
 app.use("/api/doctors", require("./routes/doctors"));
 app.use("/api/clinics", require("./routes/clinics"));
 app.use("/api/pharmacies", require("./routes/pharmacies"));
-app.use("/api/patients", require("./routes/patients"));
-// app.use("/api/search", require("./routes/search"));
-// app.use("/api/dashboard", require("./routes/dashboard"));
-app.use("/api/pathologies", require("./routes/pathologies"));
-app.use("/api/search", require("./routes/search"));
-app.use("/api/dashboard", require("./routes/dashboard"));
-app.use("/api/department", require("./routes/department")); // Corrected path from 'departments'
+app.use("/api/pathology", require("./routes/pathology"));
+app.use("/api/pathologies", require("./routes/pathology")); // Admin panel uses plural
+app.use("/api/departments", require("./routes/department"));
+app.use("/api/bookings", require("./routes/bookings"));
+app.use("/api/ambulances", require("./routes/ambulances"));
 app.use("/api/access-requests", require("./routes/accessRequests"));
+app.use("/api/dashboard", require("./routes/dashboard"));
+app.use("/api/search", require("./routes/search"));
 
 // Health check endpoint
 app.get("/api/health", (req, res) => {

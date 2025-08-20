@@ -7,147 +7,125 @@ const pathologySchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    description: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    category: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    price: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    discountedPrice: {
+      type: Number,
+      min: 0,
+    },
+    isPackage: {
+      type: Boolean,
+      default: false,
+    },
+    imageUrl: {
+      type: String,
+      trim: true,
+    },
+    preparationInstructions: {
+      type: String,
+      trim: true,
+    },
+    reportTime: {
+      type: String,
+      default: "24 hours",
+      trim: true,
+    },
+    homeCollection: {
+      type: Boolean,
+      default: false,
+    },
     licenseNumber: {
       type: String,
-      required: false, // Made optional
-      unique: true,
-      sparse: true, // Allow multiple null values
-    },
-    email: {
-      type: String,
-      required: true,
-      unique: true,
-      trim: true,
-      lowercase: true,
-    },
-    phone: {
-      type: String,
-      required: true,
+      sparse: true,
+      set: function (val) {
+        return val === "" ? undefined : val;
+      },
     },
     address: {
-      type: String,
-      required: true,
+      street: String,
+      city: String,
+      state: String,
+      pincode: String,
+      country: {
+        type: String,
+        default: "India",
+      },
+      location: {
+        type: {
+          type: String,
+          enum: ["Point"],
+          default: "Point",
+        },
+        coordinates: {
+          type: [Number],
+          default: [0, 0],
+        },
+      },
     },
-    place: {
-      type: String,
-      required: true,
-    },
-    state: {
-      type: String,
-      required: true,
-    },
-    zipCode: {
-      type: String,
-      required: true,
-    },
-    country: {
-      type: String,
-      default: "India",
-    },
-    coordinates: {
-      type: [Number], // [longitude, latitude]
-      index: "2dsphere",
+    contact: {
+      phone: String,
+      email: String,
+      website: String,
     },
     operatingHours: {
-      monday: {
-        open: String,
-        close: String,
-        isClosed: { type: Boolean, default: false },
-      },
-      tuesday: {
-        open: String,
-        close: String,
-        isClosed: { type: Boolean, default: false },
-      },
-      wednesday: {
-        open: String,
-        close: String,
-        isClosed: { type: Boolean, default: false },
-      },
-      thursday: {
-        open: String,
-        close: String,
-        isClosed: { type: Boolean, default: false },
-      },
-      friday: {
-        open: String,
-        close: String,
-        isClosed: { type: Boolean, default: false },
-      },
-      saturday: {
-        open: String,
-        close: String,
-        isClosed: { type: Boolean, default: false },
-      },
-      sunday: {
-        open: String,
-        close: String,
-        isClosed: { type: Boolean, default: false },
-      },
+      monday: { open: String, close: String },
+      tuesday: { open: String, close: String },
+      wednesday: { open: String, close: String },
+      thursday: { open: String, close: String },
+      friday: { open: String, close: String },
+      saturday: { open: String, close: String },
+      sunday: { open: String, close: String },
     },
-    servicesOffered: [String],
-    testsOffered: [
-      {
-        name: String,
-        category: String,
-        price: Number,
-        discountedPrice: Number,
-        discountType: {
-          type: String,
-          enum: ["percentage", "flat"],
-          default: "flat",
-        },
-        discountValue: Number, // percentage or flat amount
-        requiresPrescription: { type: Boolean, default: false },
-        image: {
-          data: Buffer,
-          contentType: String,
-        },
-        imageUrl: String,
-        description: String,
-        preparationInstructions: String,
-        reportTime: String, // e.g., "24 hours", "Same day"
-        isHomeCollection: { type: Boolean, default: false },
-        homeCollectionFee: { type: Number, default: 0 },
-      },
-    ],
-    image: {
-      data: Buffer,
-      contentType: String,
-    },
-    imageUrl: String,
+    services: [String],
+    facilities: [String],
     rating: {
-      average: { type: Number, default: 0, min: 0, max: 5 },
-      count: { type: Number, default: 0 },
+      average: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 5,
+      },
+      count: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
     },
     reviews: [
       {
-        patient: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-        rating: { type: Number, required: true, min: 1, max: 5 },
+        userId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+        rating: {
+          type: Number,
+          required: true,
+          min: 1,
+          max: 5,
+        },
         comment: String,
-        date: { type: Date, default: Date.now },
+        date: {
+          type: Date,
+          default: Date.now,
+        },
       },
     ],
     isActive: {
       type: Boolean,
       default: true,
-    },
-    isVerified: {
-      type: Boolean,
-      default: false,
-    },
-    is24Hours: {
-      type: Boolean,
-      default: false,
-    },
-    homeCollection: {
-      available: { type: Boolean, default: false },
-      fee: { type: Number, default: 0 },
-      areas: [String], // Areas where home collection is available
-      timing: {
-        start: String,
-        end: String,
-      },
     },
   },
   {
@@ -155,12 +133,16 @@ const pathologySchema = new mongoose.Schema(
   }
 );
 
-// Search index
+// Create geospatial index
+pathologySchema.index({ "address.location": "2dsphere" });
+
+// Create text index for search
 pathologySchema.index({
   name: "text",
+  description: "text",
+  category: "text",
   "address.city": "text",
-  servicesOffered: "text",
-  "testsOffered.name": "text",
+  "address.state": "text",
 });
 
 module.exports = mongoose.model("Pathology", pathologySchema);

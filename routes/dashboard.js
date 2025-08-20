@@ -7,6 +7,7 @@ const Booking = require("../models/Booking");
 const Activity = require("../models/Activity");
 const Pathology = require("../models/Pathology");
 const Department = require("../models/Department");
+const Ambulance = require("../models/Ambulance");
 const { auth, adminAuth } = require("../middleware/auth");
 
 const router = express.Router();
@@ -30,14 +31,13 @@ router.get("/stats", adminAuth, async (req, res) => {
       totalDoctors,
       totalClinics,
       totalPharmacies,
-      totalPatients,
+      totalPathologies,
+      totalDepartments,
       totalUsers,
+      totalAmbulances,
       totalBookings,
       completedBookings,
       pendingBookings,
-      totalPathologies,
-      totalDepartments,
-      // Period-specific counts
       periodDoctors,
       periodClinics,
       periodPharmacies,
@@ -47,14 +47,13 @@ router.get("/stats", adminAuth, async (req, res) => {
       Doctor.countDocuments({ isActive: true }),
       Clinic.countDocuments({ isActive: true }),
       Pharmacy.countDocuments({ isActive: true }),
+      Pathology.countDocuments({ isActive: true }),
+      Department.countDocuments({ isActive: true }),
       User.countDocuments({ role: "user", isActive: true }),
-      User.countDocuments({ isActive: true }),
+      Ambulance.countDocuments({ isActive: true }),
       Booking.countDocuments(),
       Booking.countDocuments({ status: "completed" }),
       Booking.countDocuments({ status: "pending" }),
-      Pathology.countDocuments({ isActive: true }),
-      Department.countDocuments({ isActive: true }),
-      // Period-specific counts
       Doctor.countDocuments({
         isActive: true,
         createdAt: { $gte: dateRange },
@@ -82,13 +81,14 @@ router.get("/stats", adminAuth, async (req, res) => {
       totalDoctors,
       totalClinics,
       totalPharmacies,
-      totalPatients,
+      totalPathologies,
+      totalDepartments,
       totalUsers,
+      totalPatients: totalUsers, // Add this line - patients are users with role "user"
+      totalAmbulances,
       totalBookings,
       completedBookings,
       pendingBookings,
-      totalPathologies,
-      totalDepartments,
       periodStats: {
         doctors: periodDoctors,
         clinics: periodClinics,
@@ -110,9 +110,7 @@ router.get("/stats", adminAuth, async (req, res) => {
             ? Math.round((periodPharmacies / totalPharmacies) * 100)
             : 0,
         patients:
-          totalPatients > 0
-            ? Math.round((periodPatients / totalPatients) * 100)
-            : 0,
+          totalUsers > 0 ? Math.round((periodPatients / totalUsers) * 100) : 0,
         bookings:
           totalBookings > 0
             ? Math.round((periodBookings / totalBookings) * 100)

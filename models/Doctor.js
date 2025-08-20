@@ -19,24 +19,10 @@ const doctorSchema = new mongoose.Schema(
       required: true,
       unique: true,
     },
-    specialization: {
-      type: String,
+    department: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Department",
       required: true,
-      enum: [
-        "Cardiology",
-        "Dermatology",
-        "Neurology",
-        "Pediatrics",
-        "Orthopedics",
-        "Gynecology",
-        "Psychiatry",
-        "Radiology",
-        "Anesthesiology",
-        "Pathology",
-        "Emergency",
-        "General",
-        "Others",
-      ],
     },
     qualification: {
       type: String,
@@ -49,10 +35,10 @@ const doctorSchema = new mongoose.Schema(
     },
     licenseNumber: {
       type: String,
-      required: true,
+      required: false,
       unique: true,
+      sparse: true,
     },
-    department: { type: mongoose.Schema.Types.ObjectId, ref: "Department" },
     consultationFee: {
       type: Number,
       required: true,
@@ -77,9 +63,20 @@ const doctorSchema = new mongoose.Schema(
         },
         coordinates: {
           type: [Number],
+          default: [0, 0], // Default coordinates to avoid geo index errors
           index: "2dsphere",
         },
       },
+    },
+    // Add state for easier filtering and display
+    state: {
+      type: String,
+      required: true,
+    },
+    // Add city for easier filtering and display
+    city: {
+      type: String,
+      required: true,
     },
     clinics: [
       {
@@ -154,7 +151,7 @@ doctorSchema.methods.calculateRating = function () {
 // Search index
 doctorSchema.index({
   name: "text",
-  specialization: "text",
+  qualification: "text",
   "address.city": "text",
 });
 
