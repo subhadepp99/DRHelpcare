@@ -8,28 +8,9 @@ const { createActivity } = require("../utils/activity");
 
 const router = express.Router();
 
-// Configure multer for image uploads
-const storage = multer.diskStorage({
-  destination: async (req, file, cb) => {
-    const uploadPath = path.join(__dirname, "..", "uploads", "clinics");
-    try {
-      await fs.mkdir(uploadPath, { recursive: true });
-      cb(null, uploadPath);
-    } catch (error) {
-      cb(error, null);
-    }
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(
-      null,
-      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname)
-    );
-  },
-});
-
+// Configure multer for memory storage (database storage)
 const upload = multer({
-  storage: storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB limit
   },
@@ -85,24 +66,33 @@ router.get("/", async (req, res) => {
     sortObj[sortBy] = sortOrder === "desc" ? -1 : 1;
 
     const clinics = await Clinic.find(query)
-      .select("-reviews -__v")
-      .populate("doctors", "name specialization")
+      .select("-reviews -__v -image.data")
+      .populate("doctors.doctor", "name qualification experience imageUrl")
       .sort(sortObj)
       .limit(limit * 1)
       .skip((page - 1) * limit);
 
     const total = await Clinic.countDocuments(query);
 
+    // Convert database images to base64 for frontend
+    const clinicsWithImages = clinics.map((clinic) => {
+      const clinicObj = clinic.toObject();
+      if (clinicObj.image && clinicObj.image.data) {
+        clinicObj.image = `data:${
+          clinicObj.image.contentType
+        };base64,${clinicObj.image.data.toString("base64")}`;
+      }
+      return clinicObj;
+    });
+
     res.json({
       success: true,
       data: {
-        clinics,
-        pagination: {
-          total,
-          page: parseInt(page),
-          pages: Math.ceil(total / limit),
-          limit: parseInt(limit),
-        },
+        clinics: clinicsWithImages,
+        total,
+        page: page * 1,
+        limit: limit * 1,
+        totalPages: Math.ceil(total / limit),
       },
     });
   } catch (error) {
@@ -110,6 +100,131 @@ router.get("/", async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch clinics",
+      error: error.message,
+    });
+  }
+});
+
+// Search clinics by name and location - MUST come before /:id route
+router.get("/search", async (req, res) => {
+  try {
+    const { name = "", location = "" } = req.query;
+
+    console.log("Clinic search request:", { name, location });
+
+    const query = { isActive: true };
+
+    // Add name filter - search in name field
+    if (name) {
+      // Handle both exact matches and partial matches
+      query.name = new RegExp(name.replace(/-/g, " "), "i");
+    }
+
+    // Add location filter - check multiple location fields
+    if (location && location !== "unknown") {
+      query.$or = [
+        { place: new RegExp(location, "i") },
+        { state: new RegExp(location, "i") },
+        { address: new RegExp(location, "i") }, // address is a string field
+      ];
+    }
+
+    console.log("Search query:", JSON.stringify(query, null, 2));
+
+    // First, let's see what clinics exist in the database
+    const allClinics = await Clinic.find({ isActive: true }).select(
+      "name place state address"
+    );
+    console.log("All active clinics in database:", allClinics);
+
+    const clinics = await Clinic.find(query)
+      .select(
+        "_id name place state address isActive type imageUrl rating services facilities phone email description image"
+      )
+      .limit(20);
+
+    console.log(`Found ${clinics.length} clinics matching the search`);
+    console.log(
+      "Matching clinics:",
+      clinics.map((c) => ({
+        id: c._id,
+        name: c.name,
+        place: c.place,
+        state: c.state,
+        address: c.address,
+        type: c.type,
+        phone: c.phone,
+        email: c.email,
+      }))
+    );
+
+    // Convert database images to base64 for frontend
+    const clinicsWithImages = clinics.map((clinic) => {
+      const clinicObj = clinic.toObject();
+      if (clinicObj.image && clinicObj.image.data) {
+        clinicObj.image = `data:${
+          clinicObj.image.contentType
+        };base64,${clinicObj.image.data.toString("base64")}`;
+      }
+      return clinicObj;
+    });
+
+    res.json({
+      success: true,
+      data: {
+        clinics: clinicsWithImages,
+        total: clinics.length,
+      },
+    });
+  } catch (error) {
+    console.error("Search clinics error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to search clinics",
+      error: error.message,
+    });
+  }
+});
+
+// Get clinic by ID - MUST come before /:id route
+router.get("/by-id/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    console.log("Get clinic by ID request:", { id });
+
+    const clinic = await Clinic.findById(id)
+      .select("-reviews -__v")
+      .populate("doctors.doctor", "name qualification experience imageUrl");
+
+    if (!clinic) {
+      return res.status(404).json({
+        success: false,
+        message: "Clinic not found",
+      });
+    }
+
+    // Convert database image to base64 for frontend
+    const clinicObj = clinic.toObject();
+    if (clinicObj.image && clinicObj.image.data) {
+      clinicObj.image = `data:${
+        clinicObj.image.contentType
+      };base64,${clinicObj.image.data.toString("base64")}`;
+    }
+
+    console.log("Found clinic:", { id: clinic._id, name: clinic.name });
+
+    res.json({
+      success: true,
+      data: {
+        clinic: clinicObj,
+      },
+    });
+  } catch (error) {
+    console.error("Get clinic by ID error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get clinic",
       error: error.message,
     });
   }
@@ -123,9 +238,10 @@ router.get("/:id", async (req, res) => {
       isActive: true,
     })
       .populate(
-        "doctors",
-        "name specialization qualification experience consultationFee"
+        "doctors.doctor",
+        "name qualification experience imageUrl bio department"
       )
+      .populate("doctors.doctor.department", "name")
       .populate("reviews.patient", "firstName lastName");
 
     if (!clinic) {
@@ -135,9 +251,17 @@ router.get("/:id", async (req, res) => {
       });
     }
 
+    // Convert database image to base64 for frontend
+    const clinicObj = clinic.toObject();
+    if (clinicObj.image && clinicObj.image.data) {
+      clinicObj.image = `data:${
+        clinicObj.image.contentType
+      };base64,${clinicObj.image.data.toString("base64")}`;
+    }
+
     res.json({
       success: true,
-      data: clinic,
+      data: clinicObj,
     });
   } catch (error) {
     console.error("Get clinic error:", error);
@@ -216,10 +340,28 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       imageUrl,
     };
 
-    // Add image path if uploaded
+    // Add image to database if uploaded via file or base64
     if (req.file) {
-      clinicData.image = `/uploads/clinics/${req.file.filename}`;
-      clinicData.imageUrl = `/uploads/clinics/${req.file.filename}`; // Set imageUrl for public access
+      clinicData.image = {
+        data: req.file.buffer,
+        contentType: req.file.mimetype,
+      };
+      // Keep imageUrl for backward compatibility
+      clinicData.imageUrl = `data:${
+        req.file.mimetype
+      };base64,${req.file.buffer.toString("base64")}`;
+    } else if (imageUrl && imageUrl.startsWith("data:image/")) {
+      // Handle base64 image data
+      const matches = imageUrl.match(/^data:(image\/[a-zA-Z]+);base64,(.+)$/);
+      if (matches) {
+        const contentType = matches[1];
+        const base64Data = matches[2];
+        const buffer = Buffer.from(base64Data, "base64");
+        clinicData.image = {
+          data: buffer,
+          contentType: contentType,
+        };
+      }
     }
 
     const clinic = new Clinic(clinicData);
@@ -234,22 +376,21 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       targetModel: "Clinic",
     });
 
+    // Convert database image to base64 for response
+    const clinicObj = clinic.toObject();
+    if (clinicObj.image && clinicObj.image.data) {
+      clinicObj.image = `data:${
+        clinicObj.image.contentType
+      };base64,${clinicObj.image.data.toString("base64")}`;
+    }
+
     res.status(201).json({
       success: true,
       message: "Clinic created successfully",
-      data: clinic,
+      data: clinicObj,
     });
   } catch (error) {
     console.error("Create clinic error:", error);
-
-    // Clean up uploaded file if error occurred
-    if (req.file) {
-      try {
-        await fs.unlink(req.file.path);
-      } catch (unlinkError) {
-        console.error("Failed to delete uploaded file:", unlinkError);
-      }
-    }
 
     res.status(500).json({
       success: false,
@@ -289,25 +430,29 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
 
     // Handle image update
     if (req.file) {
-      // Delete old image if exists
-      if (clinic.image && clinic.image.startsWith("/uploads/")) {
-        const oldImagePath = path.join(
-          __dirname,
-          "..",
-          clinic.image.replace("/uploads/", "uploads/")
-        );
-        try {
-          await fs.unlink(oldImagePath);
-        } catch (error) {
-          console.log(
-            "Old image not found or could not be deleted:",
-            error.message
-          );
-        }
+      // Store new image in database
+      updates.image = {
+        data: req.file.buffer,
+        contentType: req.file.mimetype,
+      };
+      // Keep imageUrl for backward compatibility
+      updates.imageUrl = `data:${
+        req.file.mimetype
+      };base64,${req.file.buffer.toString("base64")}`;
+    } else if (updates.imageUrl && updates.imageUrl.startsWith("data:image/")) {
+      // Handle base64 image data
+      const matches = updates.imageUrl.match(
+        /^data:(image\/[a-zA-Z]+);base64,(.+)$/
+      );
+      if (matches) {
+        const contentType = matches[1];
+        const base64Data = matches[2];
+        const buffer = Buffer.from(base64Data, "base64");
+        updates.image = {
+          data: buffer,
+          contentType: contentType,
+        };
       }
-
-      updates.image = `/uploads/clinics/${req.file.filename}`;
-      updates.imageUrl = `/uploads/clinics/${req.file.filename}`; // Set imageUrl for public access
     }
 
     const updatedClinic = await Clinic.findByIdAndUpdate(clinicId, updates, {
@@ -324,22 +469,21 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       targetModel: "Clinic",
     });
 
+    // Convert database image to base64 for response
+    const clinicObj = updatedClinic.toObject();
+    if (clinicObj.image && clinicObj.image.data) {
+      clinicObj.image = `data:${
+        clinicObj.image.contentType
+      };base64,${clinicObj.image.data.toString("base64")}`;
+    }
+
     res.json({
       success: true,
       message: "Clinic updated successfully",
-      data: updatedClinic,
+      data: clinicObj,
     });
   } catch (error) {
     console.error("Update clinic error:", error);
-
-    // Clean up uploaded file if error occurred
-    if (req.file) {
-      try {
-        await fs.unlink(req.file.path);
-      } catch (unlinkError) {
-        console.error("Failed to delete uploaded file:", unlinkError);
-      }
-    }
 
     res.status(500).json({
       success: false,
@@ -450,6 +594,122 @@ router.post("/:id/reviews", auth, async (req, res) => {
       message: "Failed to add review",
       error: error.message,
     });
+  }
+});
+
+// Get clinic doctors with detailed information
+router.get("/:id/doctors", async (req, res) => {
+  try {
+    const clinicId = req.params.id;
+    const {
+      page = 1,
+      limit = 20,
+      search = "",
+      department = "",
+      available = "",
+    } = req.query;
+
+    const clinic = await Clinic.findById(clinicId).populate({
+      path: "doctors.doctor",
+      select:
+        "name qualification experience imageUrl bio department availableDateTime",
+      populate: {
+        path: "department",
+        select: "name",
+      },
+    });
+
+    if (!clinic) {
+      return res.status(404).json({
+        success: false,
+        message: "Clinic not found",
+      });
+    }
+
+    // Filter active doctors
+    let activeDoctors = clinic.doctors.filter((doc) => doc.isActive);
+
+    // Apply search filter
+    if (search) {
+      activeDoctors = activeDoctors.filter(
+        (doc) =>
+          doc.doctor.name.toLowerCase().includes(search.toLowerCase()) ||
+          doc.doctor.qualification
+            .toLowerCase()
+            .includes(search.toLowerCase()) ||
+          (doc.doctor.bio &&
+            doc.doctor.bio.toLowerCase().includes(search.toLowerCase()))
+      );
+    }
+
+    // Apply department filter
+    if (department) {
+      activeDoctors = activeDoctors.filter(
+        (doc) =>
+          doc.doctor.department &&
+          doc.doctor.department.name
+            .toLowerCase()
+            .includes(department.toLowerCase())
+      );
+    }
+
+    // Apply availability filter
+    if (available === "true") {
+      activeDoctors = activeDoctors.filter(
+        (doc) =>
+          doc.doctor.availableDateTime &&
+          doc.doctor.availableDateTime.length > 0
+      );
+    }
+
+    // Pagination
+    const skip = (page - 1) * limit;
+    const paginatedDoctors = activeDoctors.slice(skip, skip + parseInt(limit));
+
+    res.json({
+      success: true,
+      data: {
+        clinic: {
+          _id: clinic._id,
+          name: clinic.name,
+          address: clinic.address,
+          place: clinic.place,
+          state: clinic.state,
+          city: clinic.city,
+        },
+        doctors: paginatedDoctors,
+        pagination: {
+          total: activeDoctors.length,
+          page: parseInt(page),
+          pages: Math.ceil(activeDoctors.length / limit),
+          limit: parseInt(limit),
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Get clinic doctors error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch clinic doctors",
+      error: error.message,
+    });
+  }
+});
+
+// Get clinic image from database
+router.get("/:id/image", async (req, res) => {
+  try {
+    const clinic = await Clinic.findById(req.params.id);
+
+    if (!clinic || !clinic.image || !clinic.image.data) {
+      return res.status(404).json({ message: "Image not found" });
+    }
+
+    res.set("Content-Type", clinic.image.contentType);
+    res.send(clinic.image.data);
+  } catch (error) {
+    console.error("Get clinic image error:", error);
+    res.status(500).json({ message: "Error fetching image" });
   }
 });
 

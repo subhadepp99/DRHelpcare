@@ -37,7 +37,7 @@ const bookingSchema = new mongoose.Schema(
     patientDetails: {
       name: { type: String, required: true },
       phone: { type: String, required: true },
-      email: { type: String, required: true },
+      email: { type: String, required: false }, // Made optional
       age: Number,
       gender: String,
     },

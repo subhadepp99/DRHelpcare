@@ -97,6 +97,51 @@ router.post("/", auth, async (req, res) => {
   }
 });
 
+// Get all bookings for admin
+router.get("/admin", auth, async (req, res) => {
+  try {
+    if (!["admin", "superuser"].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    const { status, page = 1, limit = 50 } = req.query;
+
+    const query = {};
+    if (status && status !== "all") query.status = status;
+
+    const bookings = await Booking.find(query)
+      .populate("doctor", "name specialization image consultationFee address")
+      .populate("clinic", "name address")
+      .populate("patient", "firstName lastName email phone")
+      .sort({ appointmentDate: -1, appointmentTime: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await Booking.countDocuments(query);
+
+    res.json({
+      success: true,
+      bookings,
+      pagination: {
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / limit),
+        limit: parseInt(limit),
+      },
+    });
+  } catch (error) {
+    console.error("Get admin bookings error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch bookings",
+      error: error.message,
+    });
+  }
+});
+
 // Get user's bookings
 router.get("/user/:userId", auth, async (req, res) => {
   try {
@@ -153,6 +198,71 @@ router.get("/user/:userId", auth, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch bookings",
+      error: error.message,
+    });
+  }
+});
+
+// Update booking status
+router.put("/:bookingId/status", auth, async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { status } = req.body;
+
+    if (
+      !["pending", "confirmed", "completed", "cancelled", "no_show"].includes(
+        status
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status",
+      });
+    }
+
+    const booking = await Booking.findById(bookingId);
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found",
+      });
+    }
+
+    // Check access permissions
+    const canAccess =
+      booking.patient.toString() === req.user.id ||
+      booking.doctor.toString() === req.user.id ||
+      ["admin", "superuser"].includes(req.user.role);
+
+    if (!canAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    booking.status = status;
+    await booking.save();
+
+    // Create activity log
+    await createActivity({
+      type: "booking_status_updated",
+      message: `Booking ${booking.bookingId} status updated to ${status}`,
+      user: req.user.id,
+      targetId: booking._id,
+      targetModel: "Booking",
+    });
+
+    res.json({
+      success: true,
+      message: "Booking status updated successfully",
+      booking,
+    });
+  } catch (error) {
+    console.error("Update booking status error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update booking status",
       error: error.message,
     });
   }

@@ -46,6 +46,19 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
+app.use(
+  cors({
+    origin: [
+      "http://drhelp.in",
+      "https://drhelp.in",
+      "http://localhost:3000",
+      "https://localhost:3000",
+    ], // frontend domain
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+  })
+);
+
 // Handle OPTIONS for all routes with the same options
 app.options("*", cors(corsOptions));
 

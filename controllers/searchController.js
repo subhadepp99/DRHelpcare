@@ -3,6 +3,7 @@ const Clinic = require("../models/Clinic");
 const Pharmacy = require("../models/Pharmacy");
 const Patient = require("../models/Patient");
 const Pathology = require("../models/Pathology"); // Import Pathology model
+const Ambulance = require("../models/Ambulance"); // Import Ambulance model
 
 // Helper to check if location params are present
 function hasLocationParams(query) {
@@ -190,6 +191,13 @@ exports.searchByLocation = async (req, res) => {
         isActive: true,
         ...locationQuery,
       }).select("-image.data");
+    }
+
+    if (!type || type === "ambulance") {
+      results.ambulances = await Ambulance.find({
+        isActive: true,
+        ...locationQuery,
+      });
     }
 
     // Validation: If all results are empty, return a message

@@ -114,6 +114,7 @@ router.get("/", async (req, res) => {
       query.$or = [
         { name: new RegExp(search, "i") },
         { qualification: new RegExp(search, "i") },
+        { bio: new RegExp(search, "i") },
       ];
     }
 
@@ -140,6 +141,7 @@ router.get("/", async (req, res) => {
     const doctors = await Doctor.find(query)
       .select("-reviews -__v")
       .populate("department", "name") // Populate department name
+      .populate("clinicDetails.clinic", "name address place state city") // Populate clinic details
       .sort(sortObj)
       .limit(limit * 1)
       .skip((page - 1) * limit);
@@ -176,6 +178,10 @@ router.get("/:id", async (req, res) => {
       isActive: true,
     })
       .populate("department", "name")
+      .populate(
+        "clinicDetails.clinic",
+        "name address place state city zipCode country coordinates operatingHours"
+      )
       .populate("reviews.patient", "firstName lastName");
 
     if (!doctor) {
@@ -217,6 +223,10 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       experience,
       licenseNumber,
       consultationFee,
+      doctorFees,
+      bio,
+      availableDateTime,
+      clinicDetails,
       address = {},
       state,
       city,
@@ -300,12 +310,55 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       qualification,
       experience: parseInt(experience),
       consultationFee: parseFloat(consultationFee),
+      doctorFees: doctorFees
+        ? parseFloat(doctorFees)
+        : parseFloat(consultationFee),
+      bio: bio || "",
       address: parsedAddress,
       state,
       city,
       languages: parsedLanguages,
       services: parsedServices,
     };
+
+    // Handle availableDateTime if provided
+    if (availableDateTime && typeof availableDateTime === "string") {
+      try {
+        doctorData.availableDateTime = JSON.parse(availableDateTime);
+      } catch (error) {
+        console.log("Error parsing availableDateTime:", error);
+        doctorData.availableDateTime = [];
+      }
+    } else if (availableDateTime) {
+      doctorData.availableDateTime = availableDateTime;
+    }
+
+    // Handle clinicDetails if provided
+    if (clinicDetails && typeof clinicDetails === "string") {
+      try {
+        doctorData.clinicDetails = JSON.parse(clinicDetails);
+      } catch (error) {
+        console.log("Error parsing clinicDetails:", error);
+        doctorData.clinicDetails = [];
+      }
+    } else if (clinicDetails) {
+      doctorData.clinicDetails = clinicDetails;
+    }
+
+    // Handle bookingSchedule if provided
+    if (
+      req.body.bookingSchedule &&
+      typeof req.body.bookingSchedule === "string"
+    ) {
+      try {
+        doctorData.bookingSchedule = JSON.parse(req.body.bookingSchedule);
+      } catch (error) {
+        console.log("Error parsing bookingSchedule:", error);
+        doctorData.bookingSchedule = [];
+      }
+    } else if (req.body.bookingSchedule) {
+      doctorData.bookingSchedule = req.body.bookingSchedule;
+    }
 
     // Address structure is already handled above
 
@@ -335,6 +388,29 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
 
     const doctor = new Doctor(doctorData);
     await doctor.save();
+
+    // Sync clinics with the new doctor
+    if (doctorData.clinicDetails && doctorData.clinicDetails.length > 0) {
+      const Clinic = require("../models/Clinic");
+      for (const clinicDetail of doctorData.clinicDetails) {
+        try {
+          await Clinic.findByIdAndUpdate(clinicDetail.clinic, {
+            $addToSet: {
+              doctors: {
+                doctor: doctor._id,
+                isActive: true,
+                consultationFee: clinicDetail.consultationFee,
+                availableDays: clinicDetail.availableDays || [],
+                availableSlots: clinicDetail.availableSlots || [],
+                joinedDate: new Date(),
+              },
+            },
+          });
+        } catch (error) {
+          console.log(`Failed to sync clinic ${clinicDetail.clinic}:`, error);
+        }
+      }
+    }
 
     // Create activity log
     await createActivity({
@@ -450,6 +526,48 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
     if (updates.experience) updates.experience = parseInt(updates.experience);
     if (updates.consultationFee)
       updates.consultationFee = parseFloat(updates.consultationFee);
+    if (updates.doctorFees) updates.doctorFees = parseFloat(updates.doctorFees);
+
+    // Handle bio field
+    if (updates.bio !== undefined) {
+      updates.bio = updates.bio || "";
+    }
+
+    // Handle availableDateTime if provided
+    if (
+      updates.availableDateTime &&
+      typeof updates.availableDateTime === "string"
+    ) {
+      try {
+        updates.availableDateTime = JSON.parse(updates.availableDateTime);
+      } catch (error) {
+        console.log("Error parsing availableDateTime in update:", error);
+        updates.availableDateTime = [];
+      }
+    }
+
+    // Handle clinicDetails if provided
+    if (updates.clinicDetails && typeof updates.clinicDetails === "string") {
+      try {
+        updates.clinicDetails = JSON.parse(updates.clinicDetails);
+      } catch (error) {
+        console.log("Error parsing clinicDetails in update:", error);
+        updates.clinicDetails = [];
+      }
+    }
+
+    // Handle bookingSchedule if provided
+    if (
+      updates.bookingSchedule &&
+      typeof updates.bookingSchedule === "string"
+    ) {
+      try {
+        updates.bookingSchedule = JSON.parse(updates.bookingSchedule);
+      } catch (error) {
+        console.log("Error parsing bookingSchedule in update:", error);
+        updates.bookingSchedule = [];
+      }
+    }
 
     // Handle licenseNumber - remove if empty, trim if not empty
     if (updates.licenseNumber !== undefined) {
@@ -501,6 +619,37 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       runValidators: true,
     });
 
+    // Sync clinics with the updated doctor
+    if (updates.clinicDetails && updates.clinicDetails.length > 0) {
+      const Clinic = require("../models/Clinic");
+
+      // First, remove doctor from all clinics
+      await Clinic.updateMany(
+        { "doctors.doctor": doctorId },
+        { $pull: { doctors: { doctor: doctorId } } }
+      );
+
+      // Then add doctor to selected clinics
+      for (const clinicDetail of updates.clinicDetails) {
+        try {
+          await Clinic.findByIdAndUpdate(clinicDetail.clinic, {
+            $addToSet: {
+              doctors: {
+                doctor: doctorId,
+                isActive: true,
+                consultationFee: clinicDetail.consultationFee,
+                availableDays: clinicDetail.availableDays || [],
+                availableSlots: clinicDetail.availableSlots || [],
+                joinedDate: new Date(),
+              },
+            },
+          });
+        } catch (error) {
+          console.log(`Failed to sync clinic ${clinicDetail.clinic}:`, error);
+        }
+      }
+    }
+
     // Create activity log
     await createActivity({
       type: "doctor_updated",
@@ -551,6 +700,13 @@ router.delete("/:id", adminAuth, async (req, res) => {
     // Soft delete by setting isActive to false
     doctor.isActive = false;
     await doctor.save();
+
+    // Remove doctor from all clinics
+    const Clinic = require("../models/Clinic");
+    await Clinic.updateMany(
+      { "doctors.doctor": doctorId },
+      { $pull: { doctors: { doctor: doctorId } } }
+    );
 
     // Create activity log
     await createActivity({
@@ -689,6 +845,67 @@ router.get("/meta/specializations", async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch specializations",
+      error: error.message,
+    });
+  }
+});
+
+// Get doctor availability for a specific date range
+router.get("/:id/availability", async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const doctorId = req.params.id;
+
+    const doctor = await Doctor.findById(doctorId).select(
+      "bookingSchedule availableDateTime"
+    );
+    if (!doctor) {
+      return res.status(404).json({
+        success: false,
+        message: "Doctor not found",
+      });
+    }
+
+    let availability = [];
+
+    // If specific date range is requested, filter by that
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+
+      if (doctor.bookingSchedule) {
+        availability = doctor.bookingSchedule.filter((schedule) => {
+          const scheduleDate = new Date(schedule.date);
+          return scheduleDate >= start && scheduleDate <= end;
+        });
+      }
+    } else {
+      // Return next 30 days availability
+      const start = new Date();
+      const end = new Date();
+      end.setDate(end.getDate() + 30);
+
+      if (doctor.bookingSchedule) {
+        availability = doctor.bookingSchedule.filter((schedule) => {
+          const scheduleDate = new Date(schedule.date);
+          return scheduleDate >= start && scheduleDate <= end;
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        doctorId,
+        availability,
+        generalSchedule: doctor.availableDateTime,
+      },
+    });
+  } catch (error) {
+    console.error("Get doctor availability error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch doctor availability",
       error: error.message,
     });
   }

@@ -30,10 +30,14 @@ const pathologySchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    image: {
+      data: Buffer,
+      contentType: String,
+    },
     imageUrl: {
       type: String,
       trim: true,
-    },
+    }, // Kept for backward compatibility
     preparationInstructions: {
       type: String,
       trim: true,
@@ -55,30 +59,39 @@ const pathologySchema = new mongoose.Schema(
       },
     },
     address: {
-      street: String,
-      city: String,
-      state: String,
-      pincode: String,
-      country: {
-        type: String,
-        default: "India",
-      },
-      location: {
-        type: {
-          type: String,
-          enum: ["Point"],
-          default: "Point",
-        },
-        coordinates: {
-          type: [Number],
-          default: [0, 0],
-        },
-      },
+      type: String,
+      required: true,
+      trim: true,
     },
-    contact: {
-      phone: String,
-      email: String,
-      website: String,
+    place: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    state: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    zipCode: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    country: {
+      type: String,
+      default: "India",
+      trim: true,
+    },
+    phone: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    email: {
+      type: String,
+      required: true,
+      trim: true,
     },
     operatingHours: {
       monday: { open: String, close: String },
@@ -127,22 +140,36 @@ const pathologySchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    // Add missing fields that might be used by the frontend
+    testsOffered: [
+      {
+        name: String,
+        price: Number,
+        description: String,
+        imageUrl: String,
+      },
+    ],
+    servicesOffered: [String],
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
   },
   {
     timestamps: true,
   }
 );
 
-// Create geospatial index
-pathologySchema.index({ "address.location": "2dsphere" });
+// Geospatial index removed - using simple address fields
 
 // Create text index for search
 pathologySchema.index({
   name: "text",
   description: "text",
   category: "text",
-  "address.city": "text",
-  "address.state": "text",
+  address: "text",
+  place: "text",
+  state: "text",
 });
 
 module.exports = mongoose.model("Pathology", pathologySchema);

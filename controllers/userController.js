@@ -1,11 +1,90 @@
 const User = require("../models/User");
+const ArchiveUser = require("../models/ArchiveUser");
 const { createActivity } = require("../utils/activity");
-const { prepareImageForDB, bufferToBase64 } = require("../utils/imageUpload");
+
+const path = require("path");
+const fs = require("fs");
 const {
   hashPassword,
   comparePassword,
   validatePassword,
 } = require("../utils/passwordUtils");
+
+exports.createUser = async (req, res) => {
+  try {
+    if (!["admin", "superuser"].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    const { username, email, password, firstName, lastName, phone, role } =
+      req.body;
+
+    // Check if user already exists
+    const existingUser = await User.findOne({
+      $or: [{ email }, { username }, { phone }],
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "User with this email, username, or phone already exists",
+      });
+    }
+
+    // Hash password
+    const hashedPassword = await hashPassword(password);
+
+    // Create user object
+    const userData = {
+      username,
+      email,
+      password: hashedPassword,
+      firstName,
+      lastName,
+      phone,
+      role: role || "user",
+    };
+
+    // Add profile image if uploaded
+    if (req.file) {
+      // Set the full URL for the profile image
+      const baseUrl = process.env.API_URL || "http://localhost:5000";
+      userData.profileImageUrl = `${baseUrl}/uploads/users/${req.file.filename}`;
+    }
+
+    const user = new User(userData);
+    await user.save();
+
+    // Create activity log
+    await createActivity({
+      type: "user_created",
+      message: `User ${user.username} was created by admin`,
+      user: req.user.id,
+      targetId: user._id,
+      targetModel: "User",
+    });
+
+    // Remove password from response
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
+    res.status(201).json({
+      success: true,
+      message: "User created successfully",
+      data: userResponse,
+    });
+  } catch (error) {
+    console.error("Create user error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to create user",
+      error: error.message,
+    });
+  }
+};
 
 exports.getAllUsers = async (req, res) => {
   try {
@@ -38,7 +117,7 @@ exports.getAllUsers = async (req, res) => {
     sortObj[sortBy] = sortOrder === "desc" ? -1 : 1;
 
     const users = await User.find(query)
-      .select("-password -__v -profileImage.data") // Exclude image data for list view
+      .select("-password -__v") // Exclude password and version
       .sort(sortObj)
       .limit(limit * 1)
       .skip((page - 1) * limit);
@@ -47,14 +126,6 @@ exports.getAllUsers = async (req, res) => {
 
     const usersWithImage = users.map((user) => {
       const userObj = user.toObject();
-      if (userObj.profileImage && userObj.profileImage.data) {
-        userObj.profileImage = bufferToBase64(
-          userObj.profileImage.data,
-          userObj.profileImage.contentType
-        );
-      } else {
-        userObj.profileImage = null;
-      }
       return userObj;
     });
 
@@ -92,14 +163,6 @@ exports.getProfile = async (req, res) => {
     }
 
     const userObj = user.toObject();
-    if (userObj.profileImage && userObj.profileImage.data) {
-      userObj.profileImage = bufferToBase64(
-        userObj.profileImage.data,
-        userObj.profileImage.contentType
-      );
-    } else {
-      userObj.profileImage = null;
-    }
 
     res.json({
       success: true,
@@ -118,6 +181,10 @@ exports.getProfile = async (req, res) => {
 exports.updateUser = async (req, res) => {
   try {
     const userId = req.params.id;
+    console.log("Update user called with ID:", userId);
+    console.log("Request params:", req.params);
+    console.log("Request user:", req.user);
+
     const updates = { ...req.body };
 
     if (
@@ -139,16 +206,25 @@ exports.updateUser = async (req, res) => {
     }
 
     if (req.file) {
-      const imageResult = prepareImageForDB(req.file);
-      if (!imageResult.success) {
-        return res
-          .status(400)
-          .json({ success: false, message: imageResult.error });
+      // Set the full URL for the profile image
+      const baseUrl = process.env.API_URL || "http://localhost:5000";
+      updates.profileImageUrl = `${baseUrl}/uploads/users/${req.file.filename}`;
+
+      // Remove the old profile image if it exists
+      if (user.profileImageUrl) {
+        try {
+          const oldImagePath = user.profileImageUrl.replace(baseUrl, "");
+          const fullOldPath = path.join(__dirname, "..", oldImagePath);
+          if (fs.existsSync(fullOldPath)) {
+            fs.unlinkSync(fullOldPath);
+          }
+        } catch (error) {
+          console.error("Error deleting old profile image:", error);
+        }
       }
-      updates.profileImage = imageResult.imageData;
     } else if (updates.profileImage === null) {
       // If profileImage is explicitly set to null, remove the image
-      updates.$unset = { profileImage: 1 };
+      updates.$unset = { profileImage: 1, profileImageUrl: 1 };
       delete updates.profileImage; // Remove from updates object to avoid conflicts
     }
 
@@ -169,14 +245,6 @@ exports.updateUser = async (req, res) => {
     });
 
     const updatedUserObj = updatedUser.toObject();
-    if (updatedUserObj.profileImage && updatedUserObj.profileImage.data) {
-      updatedUserObj.profileImage = bufferToBase64(
-        updatedUserObj.profileImage.data,
-        updatedUserObj.profileImage.contentType
-      );
-    } else {
-      updatedUserObj.profileImage = null;
-    }
 
     res.json({
       success: true,
@@ -282,7 +350,7 @@ exports.deactivateUser = async (req, res) => {
     await user.save();
 
     await createActivity({
-      type: "user_deleted",
+      type: "user_deactivated",
       message: `User ${user.username} was deactivated`,
       user: req.user.id,
       targetId: user._id,
@@ -298,6 +366,121 @@ exports.deactivateUser = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to deactivate user",
+      error: error.message,
+    });
+  }
+};
+
+// Delete user permanently (Admin only)
+exports.deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (req.user.id === id) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot delete your own account",
+      });
+    }
+
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (user.role === "superuser" && req.user.role !== "superuser") {
+      return res.status(403).json({
+        success: false,
+        message: "Cannot delete superuser account",
+      });
+    }
+
+    // Archive the user before deletion
+    const archiveUser = new ArchiveUser({
+      originalId: user._id.toString(),
+      username: user.username,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      phone: user.phone,
+      role: user.role,
+      profileImage: user.profileImage,
+      profileImageUrl: user.profileImageUrl,
+      address: user.address,
+      dateOfBirth: user.dateOfBirth,
+      gender: user.gender,
+      isActive: user.isActive,
+      lastLogin: user.lastLogin,
+      preferences: user.preferences,
+      accessRequest: user.accessRequest,
+      deletedBy: req.user.id,
+      deletionReason: "Admin requested permanent deletion",
+      originalData: user.toObject(),
+    });
+
+    await archiveUser.save();
+
+    // Delete the user from the main table
+    await User.findByIdAndDelete(id);
+
+    await createActivity({
+      type: "user_deleted",
+      message: `User ${user.username} was permanently deleted and archived`,
+      user: req.user.id,
+      targetId: user._id,
+      targetModel: "User",
+    });
+
+    res.json({
+      success: true,
+      message: "User deleted and archived successfully",
+    });
+  } catch (error) {
+    console.error("Delete user error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete user",
+      error: error.message,
+    });
+  }
+};
+
+// Reactivate user (Admin only)
+exports.reactivateUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    user.isActive = true;
+    await user.save();
+
+    await createActivity({
+      type: "user_reactivated",
+      message: `User ${user.username} was reactivated`,
+      user: req.user.id,
+      targetId: user._id,
+      targetModel: "User",
+    });
+
+    res.json({
+      success: true,
+      message: "User reactivated successfully",
+    });
+  } catch (error) {
+    console.error("Reactivate user error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to reactivate user",
       error: error.message,
     });
   }

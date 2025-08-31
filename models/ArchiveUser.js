@@ -1,27 +1,21 @@
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
 
-const userSchema = new mongoose.Schema(
+const archiveUserSchema = new mongoose.Schema(
   {
+    originalId: {
+      type: String,
+      required: true,
+    },
     username: {
       type: String,
       required: true,
-      unique: true,
       trim: true,
-      minlength: 3,
-      maxlength: 30,
     },
     email: {
       type: String,
       required: true,
-      unique: true,
       trim: true,
       lowercase: true,
-    },
-    password: {
-      type: String,
-      required: true,
-      minlength: 6,
     },
     firstName: {
       type: String,
@@ -36,16 +30,15 @@ const userSchema = new mongoose.Schema(
     phone: {
       type: String,
       required: true,
-      unique: true,
     },
     role: {
       type: String,
       enum: ["user", "admin", "superuser", "masteruser"],
       default: "user",
     },
-    profileImageUrl: {
-      type: String,
-      trim: true,
+    profileImage: {
+      data: Buffer,
+      contentType: String,
     },
     address: {
       street: String,
@@ -61,7 +54,7 @@ const userSchema = new mongoose.Schema(
     },
     isActive: {
       type: Boolean,
-      default: true,
+      default: false,
     },
     lastLogin: Date,
     preferences: {
@@ -91,21 +84,32 @@ const userSchema = new mongoose.Schema(
       reason: String,
       rejectionReason: String,
     },
+    // Archive specific fields
+    deletedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    deletedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    deletionReason: {
+      type: String,
+      default: "User requested deletion",
+    },
+    originalData: {
+      type: mongoose.Schema.Types.Mixed,
+    },
   },
   {
     timestamps: true,
   }
 );
 
-// Update last login
-userSchema.methods.updateLastLogin = function () {
-  this.lastLogin = new Date();
-  return this.save();
-};
+// Index for efficient queries
+archiveUserSchema.index({ originalId: 1 });
+archiveUserSchema.index({ email: 1 });
+archiveUserSchema.index({ username: 1 });
+archiveUserSchema.index({ deletedAt: 1 });
 
-// Compare password
-userSchema.methods.comparePassword = async function (candidatePassword) {
-  return bcrypt.compare(candidatePassword, this.password);
-};
-
-module.exports = mongoose.model("User", userSchema);
+module.exports = mongoose.model("ArchiveUser", archiveUserSchema);

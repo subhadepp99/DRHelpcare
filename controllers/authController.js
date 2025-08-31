@@ -1,11 +1,13 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
+const OTP = require("../models/OTP");
 const { createActivity } = require("../utils/activity");
 const {
   hashPassword,
   comparePassword,
   validatePassword,
 } = require("../utils/passwordUtils");
+const { generateOTP, sendOTP, verifyOTP } = require("../utils/sms");
 
 // Generate JWT token
 const generateToken = (userId) => {
@@ -392,6 +394,407 @@ exports.changePassword = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to change password",
+      error: error.message,
+    });
+  }
+};
+
+// Send OTP for login
+exports.sendLoginOTP = async (req, res) => {
+  try {
+    const { identifier } = req.body; // Can be email, username, or phone
+
+    if (!identifier) {
+      return res.status(400).json({
+        success: false,
+        message: "Email, username, or phone is required",
+      });
+    }
+
+    // Find user by identifier
+    const user = await User.findOne({
+      $or: [
+        { email: identifier.toLowerCase() },
+        { username: identifier.toLowerCase() },
+        { phone: identifier },
+      ],
+      isActive: true,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Generate OTP
+    const otpCode = generateOTP();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Save OTP to database
+    const otp = new OTP({
+      identifier: identifier,
+      otp: otpCode,
+      type: "login",
+      expiresAt: expiresAt,
+    });
+
+    await otp.save();
+
+    // Send OTP via SMS
+    const smsResult = await sendOTP(user.phone, otpCode, "login");
+
+    if (smsResult.success) {
+      res.json({
+        success: true,
+        message: "OTP sent successfully to your registered phone number",
+        expiresIn: "10 minutes",
+      });
+    } else {
+      // If SMS fails, still return success but log the error
+      console.error("SMS sending failed:", smsResult);
+      res.json({
+        success: true,
+        message: "OTP sent successfully to your registered phone number",
+        expiresIn: "10 minutes",
+        warning: "SMS delivery may be delayed",
+      });
+    }
+  } catch (error) {
+    console.error("Send login OTP error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to send OTP",
+      error: error.message,
+    });
+  }
+};
+
+// Verify OTP and login
+exports.verifyOTPAndLogin = async (req, res) => {
+  try {
+    const { identifier, otp } = req.body;
+
+    if (!identifier || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: "Identifier and OTP are required",
+      });
+    }
+
+    // Find the OTP record
+    const otpRecord = await OTP.findOne({
+      identifier: identifier,
+      type: "login",
+      isUsed: false,
+      expiresAt: { $gt: new Date() },
+      attempts: { $lt: 3 },
+    });
+
+    if (!otpRecord) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired OTP",
+      });
+    }
+
+    // Verify OTP
+    if (!verifyOTP(otp, otpRecord.otp)) {
+      // Increment attempts
+      await otpRecord.incrementAttempts();
+
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP",
+      });
+    }
+
+    // Find user
+    const user = await User.findOne({
+      $or: [
+        { email: identifier.toLowerCase() },
+        { username: identifier.toLowerCase() },
+        { phone: identifier },
+      ],
+      isActive: true,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Mark OTP as used
+    await otpRecord.markAsUsed();
+
+    // Update last login
+    await user.updateLastLogin();
+
+    // Generate tokens
+    const token = generateToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+
+    // Create activity log
+    await createActivity({
+      type: "user_login_otp",
+      message: `User ${user.username} logged in via OTP`,
+      user: user._id,
+      targetId: user._id,
+      targetModel: "User",
+      ipAddress: req.ip,
+      userAgent: req.get("User-Agent"),
+    });
+
+    // Prepare response user
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
+    res.json({
+      success: true,
+      message: "Login successful",
+      data: { user: userResponse, token, refreshToken },
+    });
+  } catch (error) {
+    console.error("Verify OTP and login error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Login failed",
+      error: error.message,
+    });
+  }
+};
+
+// Send OTP for password reset
+exports.sendPasswordResetOTP = async (req, res) => {
+  try {
+    const { identifier } = req.body; // Can be email, username, or phone
+
+    if (!identifier) {
+      return res.status(400).json({
+        success: false,
+        message: "Email, username, or phone is required",
+      });
+    }
+
+    // Find user by identifier
+    const user = await User.findOne({
+      $or: [
+        { email: identifier.toLowerCase() },
+        { username: identifier.toLowerCase() },
+        { phone: identifier },
+      ],
+      isActive: true,
+    });
+
+    if (!user) {
+      // Always return success to prevent enumeration
+      return res.json({
+        success: true,
+        message:
+          "If the account exists, you will receive an OTP for password reset",
+      });
+    }
+
+    // Generate OTP
+    const otpCode = generateOTP();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Save OTP to database
+    const otp = new OTP({
+      identifier: identifier,
+      otp: otpCode,
+      type: "password_reset",
+      expiresAt: expiresAt,
+    });
+
+    await otp.save();
+
+    // Send OTP via SMS
+    const smsResult = await sendOTP(user.phone, otpCode, "password_reset");
+
+    if (smsResult.success) {
+      res.json({
+        success: true,
+        message: "OTP sent successfully to your registered phone number",
+        expiresIn: "10 minutes",
+      });
+    } else {
+      console.error("SMS sending failed:", smsResult);
+      res.json({
+        success: true,
+        message: "OTP sent successfully to your registered phone number",
+        expiresIn: "10 minutes",
+        warning: "SMS delivery may be delayed",
+      });
+    }
+  } catch (error) {
+    console.error("Send password reset OTP error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to send OTP",
+      error: error.message,
+    });
+  }
+};
+
+// Send OTP for registration verification
+exports.sendRegistrationOTP = async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is required",
+      });
+    }
+
+    // Check if user already exists with this phone
+    const existingUser = await User.findOne({ phone });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "User with this phone number already exists",
+      });
+    }
+
+    // Generate OTP
+    const otpCode = generateOTP();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Save OTP to database
+    const otp = new OTP({
+      identifier: phone,
+      otp: otpCode,
+      type: "verification",
+      expiresAt: expiresAt,
+    });
+
+    await otp.save();
+
+    // Send OTP via SMS
+    const smsResult = await sendOTP(phone, otpCode, "verification");
+
+    if (smsResult.success) {
+      res.json({
+        success: true,
+        message: "Verification OTP sent successfully to your phone number",
+        expiresIn: "10 minutes",
+      });
+    } else {
+      console.error("SMS sending failed:", smsResult);
+      res.json({
+        success: true,
+        message: "Verification OTP sent successfully to your phone number",
+        expiresIn: "10 minutes",
+        warning: "SMS delivery may be delayed",
+      });
+    }
+  } catch (error) {
+    console.error("Send registration OTP error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to send OTP",
+      error: error.message,
+    });
+  }
+};
+
+// Reset password with OTP
+exports.resetPasswordWithOTP = async (req, res) => {
+  try {
+    const { identifier, otp, newPassword } = req.body;
+
+    if (!identifier || !otp || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Identifier, OTP, and new password are required",
+      });
+    }
+
+    // Validate new password
+    const passwordValidation = validatePassword(newPassword);
+    if (!passwordValidation.success) {
+      return res.status(400).json({
+        success: false,
+        message: passwordValidation.message,
+      });
+    }
+
+    // Find the OTP record
+    const otpRecord = await OTP.findOne({
+      identifier: identifier,
+      type: "password_reset",
+      isUsed: false,
+      expiresAt: { $gt: new Date() },
+      attempts: { $lt: 3 },
+    });
+
+    if (!otpRecord) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired OTP",
+      });
+    }
+
+    // Verify OTP
+    if (!verifyOTP(otp, otpRecord.otp)) {
+      // Increment attempts
+      await otpRecord.incrementAttempts();
+
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP",
+      });
+    }
+
+    // Find user
+    const user = await User.findOne({
+      $or: [
+        { email: identifier.toLowerCase() },
+        { username: identifier.toLowerCase() },
+        { phone: identifier },
+      ],
+      isActive: true,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Update password
+    user.password = await hashPassword(newPassword);
+    await user.save();
+
+    // Mark OTP as used
+    await otpRecord.markAsUsed();
+
+    // Create activity log
+    await createActivity({
+      type: "password_reset",
+      message: `User ${user.username} reset their password`,
+      user: user._id,
+      targetId: user._id,
+      targetModel: "User",
+      ipAddress: req.ip,
+      userAgent: req.get("User-Agent"),
+    });
+
+    res.json({
+      success: true,
+      message: "Password reset successfully",
+    });
+  } catch (error) {
+    console.error("Reset password with OTP error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Password reset failed",
       error: error.message,
     });
   }

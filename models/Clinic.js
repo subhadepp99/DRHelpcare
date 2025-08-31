@@ -87,15 +87,41 @@ const clinicSchema = new mongoose.Schema(
     },
     services: [String],
     facilities: [String],
+    // Updated doctors field to include more details
     doctors: [
       {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Doctor",
+        doctor: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Doctor",
+          required: true,
+        },
+        isActive: {
+          type: Boolean,
+          default: true,
+        },
+        consultationFee: {
+          type: Number,
+          min: 0,
+        },
+        availableDays: [String], // Days when doctor is available at this clinic
+        availableSlots: [
+          {
+            startTime: String,
+            endTime: String,
+            isAvailable: { type: Boolean, default: true },
+          },
+        ],
+        joinedDate: {
+          type: Date,
+          default: Date.now,
+        },
       },
     ],
-    image: String,
-    images: [String],
-    imageUrl: String, // Public URL for clinic image
+    image: {
+      data: Buffer,
+      contentType: String,
+    },
+    imageUrl: String, // Public URL for clinic image (kept for backward compatibility)
     rating: {
       average: { type: Number, default: 0, min: 0, max: 5 },
       count: { type: Number, default: 0 },
@@ -127,11 +153,74 @@ const clinicSchema = new mongoose.Schema(
   }
 );
 
+// Virtual for doctor count
+clinicSchema.virtual("doctorCount").get(function () {
+  return this.doctors ? this.doctors.length : 0;
+});
+
+// Method to get active doctors count
+clinicSchema.methods.getActiveDoctorCount = function () {
+  return this.doctors.filter((doctor) => doctor.isActive).length;
+};
+
+// Method to get all doctors with details
+clinicSchema.methods.getDoctorsWithDetails = function () {
+  return this.doctors.filter((doctor) => doctor.isActive);
+};
+
+// Method to add doctor to clinic
+clinicSchema.methods.addDoctor = function (
+  doctorId,
+  consultationFee = null,
+  availableDays = []
+) {
+  const existingDoctor = this.doctors.find(
+    (d) => d.doctor.toString() === doctorId.toString()
+  );
+
+  if (existingDoctor) {
+    // Update existing doctor details
+    if (consultationFee !== null)
+      existingDoctor.consultationFee = consultationFee;
+    if (availableDays.length > 0) existingDoctor.availableDays = availableDays;
+    existingDoctor.isActive = true;
+  } else {
+    // Add new doctor
+    this.doctors.push({
+      doctor: doctorId,
+      consultationFee,
+      availableDays,
+      isActive: true,
+      joinedDate: new Date(),
+    });
+  }
+
+  return this.save();
+};
+
+// Method to remove doctor from clinic
+clinicSchema.methods.removeDoctor = function (doctorId) {
+  const doctorIndex = this.doctors.findIndex(
+    (d) => d.doctor.toString() === doctorId.toString()
+  );
+
+  if (doctorIndex !== -1) {
+    this.doctors[doctorIndex].isActive = false;
+    return this.save();
+  }
+
+  return this;
+};
+
 // Search index
 clinicSchema.index({
   name: "text",
   services: "text",
   "address.city": "text",
 });
+
+// Ensure virtual fields are serialized
+clinicSchema.set("toJSON", { virtuals: true });
+clinicSchema.set("toObject", { virtuals: true });
 
 module.exports = mongoose.model("Clinic", clinicSchema);

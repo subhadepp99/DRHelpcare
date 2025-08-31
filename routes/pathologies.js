@@ -7,26 +7,9 @@ const path = require("path");
 
 const router = express.Router();
 
-// Configure multer for image uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadDir = path.join(__dirname, "../uploads/pathologies");
-    // Create directory if it doesn't exist
-    fs.mkdir(uploadDir, { recursive: true })
-      .then(() => cb(null, uploadDir))
-      .catch((err) => cb(err));
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(
-      null,
-      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname)
-    );
-  },
-});
-
+// Configure multer for memory storage (database storage)
 const upload = multer({
-  storage: storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB limit
   },
@@ -255,14 +238,15 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
     const pathology = new Pathology(pathologyData);
 
     if (req.file) {
-      // Store the file path and generate a public URL
+      // Store image directly in database
       pathology.image = {
-        data: req.file.path,
+        data: req.file.buffer,
         contentType: req.file.mimetype,
       };
-      pathology.imageUrl = `/uploads/pathologies/${path.basename(
-        req.file.path
-      )}`;
+      // Keep imageUrl for backward compatibility
+      pathology.imageUrl = `data:${
+        req.file.mimetype
+      };base64,${req.file.buffer.toString("base64")}`;
     }
 
     await pathology.save();
@@ -321,6 +305,21 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       JSON.stringify(pathologyData, null, 2)
     );
 
+    // Log the existing pathology data for comparison
+    console.log(
+      "Existing pathology data:",
+      JSON.stringify(
+        {
+          _id: pathology._id,
+          name: pathology.name,
+          email: pathology.email,
+          licenseNumber: pathology.licenseNumber,
+        },
+        null,
+        2
+      )
+    );
+
     // Process test images if they exist
     if (pathologyData.testsOffered) {
       try {
@@ -353,26 +352,90 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
     }
 
     if (req.file) {
-      // Delete old main image if a new one is uploaded
-      if (pathology.image && pathology.image.data) {
-        try {
-          await fs.unlink(pathology.image.data);
-        } catch (err) {
-          console.log("Old image file not found or already deleted");
-        }
-      }
-      // Store the file path and generate a public URL
+      // Store new image directly in database
       pathology.image = {
-        data: req.file.path,
+        data: req.file.buffer,
         contentType: req.file.mimetype,
       };
-      pathology.imageUrl = `/uploads/pathologies/${path.basename(
-        req.file.path
-      )}`;
+      // Keep imageUrl for backward compatibility
+      pathology.imageUrl = `data:${
+        req.file.mimetype
+      };base64,${req.file.buffer.toString("base64")}`;
     }
 
-    Object.assign(pathology, pathologyData);
-    await pathology.save();
+    // Only update fields that exist in the schema and are provided
+    const allowedFields = [
+      "name",
+      "description",
+      "category",
+      "address",
+      "place",
+      "state",
+      "zipCode",
+      "country",
+      "phone",
+      "email",
+      "operatingHours",
+      "services",
+      "facilities",
+      "rating",
+      "reviews",
+      "isActive",
+      "licenseNumber",
+      "discountedPrice",
+      "isPackage",
+      "preparationInstructions",
+      "reportTime",
+      "homeCollection",
+      "testsOffered",
+      "servicesOffered",
+      "createdBy",
+    ];
+
+    // Filter out fields that don't exist in the schema
+    const filteredData = {};
+    allowedFields.forEach((field) => {
+      if (pathologyData[field] !== undefined) {
+        // Skip empty strings for required fields
+        if (
+          [
+            "name",
+            "description",
+            "category",
+            "address",
+            "place",
+            "state",
+            "zipCode",
+            "phone",
+            "email",
+          ].includes(field)
+        ) {
+          if (pathologyData[field] && pathologyData[field].trim() !== "") {
+            filteredData[field] = pathologyData[field].trim();
+          }
+        } else {
+          filteredData[field] = pathologyData[field];
+        }
+      }
+    });
+
+    console.log("Filtered update data:", JSON.stringify(filteredData, null, 2));
+
+    // Update the pathology object with filtered data
+    Object.assign(pathology, filteredData);
+
+    // Validate and save
+    try {
+      await pathology.save();
+      console.log("Pathology saved successfully");
+    } catch (saveError) {
+      console.error("Save error details:", {
+        name: saveError.name,
+        message: saveError.message,
+        errors: saveError.errors,
+      });
+      throw saveError;
+    }
 
     res.json({
       success: true,
@@ -381,10 +444,31 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
     });
   } catch (error) {
     console.error("Update pathology error:", error);
+    console.error("Error details:", {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      code: error.code,
+    });
+
+    // Provide more specific error messages
+    let errorMessage = "Failed to update pathology";
+    if (error.name === "ValidationError") {
+      errorMessage =
+        "Validation error: " +
+        Object.values(error.errors)
+          .map((e) => e.message)
+          .join(", ");
+    } else if (error.code === 11000) {
+      errorMessage =
+        "Duplicate key error - this email or license number already exists";
+    }
+
     res.status(500).json({
       success: false,
-      message: "Failed to update pathology",
+      message: errorMessage,
       error: error.message,
+      details: process.env.NODE_ENV === "development" ? error.stack : undefined,
     });
   }
 });
@@ -401,14 +485,7 @@ router.delete("/:id", adminAuth, async (req, res) => {
       });
     }
 
-    // Delete main image if it exists
-    if (pathology.image && pathology.image.data) {
-      try {
-        await fs.unlink(pathology.image.data);
-      } catch (err) {
-        console.log("Image file not found or already deleted");
-      }
-    }
+    // No need to delete files since images are stored in database
 
     await pathology.deleteOne();
 
@@ -423,6 +500,23 @@ router.delete("/:id", adminAuth, async (req, res) => {
       message: "Failed to delete pathology",
       error: error.message,
     });
+  }
+});
+
+// Get pathology image from database
+router.get("/:id/image", async (req, res) => {
+  try {
+    const pathology = await Pathology.findById(req.params.id);
+
+    if (!pathology || !pathology.image || !pathology.image.data) {
+      return res.status(404).json({ message: "Image not found" });
+    }
+
+    res.set("Content-Type", pathology.image.contentType);
+    res.send(pathology.image.data);
+  } catch (error) {
+    console.error("Get pathology image error:", error);
+    res.status(500).json({ message: "Error fetching image" });
   }
 });
 
