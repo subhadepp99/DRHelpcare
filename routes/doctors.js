@@ -389,6 +389,11 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
     const doctor = new Doctor(doctorData);
     await doctor.save();
 
+    // Update department's doctors array
+    await Department.findByIdAndUpdate(departmentObj._id, {
+      $addToSet: { doctors: doctor._id },
+    });
+
     // Sync clinics with the new doctor
     if (doctorData.clinicDetails && doctorData.clinicDetails.length > 0) {
       const Clinic = require("../models/Clinic");
@@ -619,6 +624,22 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       runValidators: true,
     });
 
+    // Update department's doctors array if department changed
+    if (updates.department) {
+      // Remove doctor from old department
+      const oldDoctor = await Doctor.findById(doctorId);
+      if (oldDoctor && oldDoctor.department) {
+        await Department.findByIdAndUpdate(oldDoctor.department, {
+          $pull: { doctors: doctorId },
+        });
+      }
+
+      // Add doctor to new department
+      await Department.findByIdAndUpdate(updates.department, {
+        $addToSet: { doctors: doctorId },
+      });
+    }
+
     // Sync clinics with the updated doctor
     if (updates.clinicDetails && updates.clinicDetails.length > 0) {
       const Clinic = require("../models/Clinic");
@@ -700,6 +721,13 @@ router.delete("/:id", adminAuth, async (req, res) => {
     // Soft delete by setting isActive to false
     doctor.isActive = false;
     await doctor.save();
+
+    // Remove doctor from department
+    if (doctor.department) {
+      await Department.findByIdAndUpdate(doctor.department, {
+        $pull: { doctors: doctorId },
+      });
+    }
 
     // Remove doctor from all clinics
     const Clinic = require("../models/Clinic");

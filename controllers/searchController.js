@@ -106,6 +106,16 @@ exports.globalSearch = async (req, res) => {
       );
     }
 
+    // Search ambulances
+    if (!type || type === "ambulance") {
+      results.ambulances = await searchModel(
+        Ambulance,
+        ["name", "location", "city", "driverName"],
+        {},
+        ""
+      );
+    }
+
     // Search patients (only if user has appropriate permissions)
     if (
       req.user &&

@@ -3,6 +3,7 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs").promises;
 const Department = require("../models/Department");
+const Doctor = require("../models/Doctor");
 const { auth, adminAuth, superuserAuth } = require("../middleware/auth");
 
 const router = express.Router();
@@ -62,19 +63,24 @@ router.get("/public", async (req, res) => {
       ];
     }
 
-    const [departments, total] = await Promise.all([
+    const [departments, total, doctorCounts] = await Promise.all([
       Department.find(query)
         .populate("doctors", "name specialization")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
       Department.countDocuments(query),
+      Doctor.aggregate([
+        { $match: { isActive: true, department: { $ne: null } } },
+        { $group: { _id: "$department", count: { $sum: 1 } } },
+      ]),
     ]);
 
-    // Add doctor count to each department
+    const countMap = new Map(doctorCounts.map((d) => [String(d._id), d.count]));
+
     const departmentsWithCount = departments.map((dept) => ({
       ...dept.toObject(),
-      doctorCount: dept.doctors ? dept.doctors.length : 0,
+      doctorCount: countMap.get(String(dept._id)) || 0,
     }));
 
     res.json({
@@ -113,19 +119,24 @@ router.get("/", adminAuth, async (req, res) => {
       ];
     }
 
-    const [departments, total] = await Promise.all([
+    const [departments, total, doctorCounts] = await Promise.all([
       Department.find(query)
         .populate("doctors", "name specialization")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
       Department.countDocuments(query),
+      Doctor.aggregate([
+        { $match: { isActive: true, department: { $ne: null } } },
+        { $group: { _id: "$department", count: { $sum: 1 } } },
+      ]),
     ]);
 
-    // Add doctor count to each department
+    const countMap = new Map(doctorCounts.map((d) => [String(d._id), d.count]));
+
     const departmentsWithCount = departments.map((dept) => ({
       ...dept.toObject(),
-      doctorCount: dept.doctors ? dept.doctors.length : 0,
+      doctorCount: countMap.get(String(dept._id)) || 0,
     }));
 
     res.json({
@@ -189,7 +200,6 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
 
     // Add image path if uploaded
     if (req.file) {
-      departmentData.image = `/uploads/departments/${req.file.filename}`;
       departmentData.imageUrl = `/uploads/departments/${req.file.filename}`;
     } else if (req.body.imageUrl) {
       // If no file uploaded but imageUrl provided in body
@@ -244,11 +254,11 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
     // Handle image update
     if (req.file) {
       // Delete old image if exists
-      if (department.image && department.image.startsWith("/uploads/")) {
+      if (department.imageUrl && department.imageUrl.startsWith("/uploads/")) {
         const oldImagePath = path.join(
           __dirname,
           "..",
-          department.image.replace("/uploads/", "uploads/")
+          department.imageUrl.replace("/uploads/", "uploads/")
         );
         try {
           await fs.unlink(oldImagePath);
@@ -256,7 +266,6 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
           console.error("Failed to delete old image:", error);
         }
       }
-      updateData.image = `/uploads/departments/${req.file.filename}`;
       updateData.imageUrl = `/uploads/departments/${req.file.filename}`;
     } else if (req.body.imageUrl) {
       // If no file uploaded but imageUrl provided in body
@@ -289,6 +298,62 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to update department",
+      error: error.message,
+    });
+  }
+});
+
+// Sync department doctors (admin and above only)
+router.post("/sync-doctors", adminAuth, async (req, res) => {
+  try {
+    console.log("Starting department-doctors sync...");
+
+    // Get all departments
+    const departments = await Department.find({});
+    console.log(`Found ${departments.length} departments`);
+
+    // Clear all department doctors arrays first
+    await Department.updateMany({}, { $set: { doctors: [] } });
+    console.log("Cleared all department doctors arrays");
+
+    // Get all active doctors
+    const Doctor = require("../models/Doctor");
+    const doctors = await Doctor.find({ isActive: true });
+    console.log(`Found ${doctors.length} active doctors`);
+
+    // Group doctors by department
+    const departmentDoctors = {};
+    for (const doctor of doctors) {
+      if (doctor.department) {
+        const deptId = doctor.department.toString();
+        if (!departmentDoctors[deptId]) {
+          departmentDoctors[deptId] = [];
+        }
+        departmentDoctors[deptId].push(doctor._id);
+      }
+    }
+
+    // Update each department with its doctors
+    for (const [deptId, doctorIds] of Object.entries(departmentDoctors)) {
+      await Department.findByIdAndUpdate(deptId, {
+        $set: { doctors: doctorIds },
+      });
+      console.log(
+        `Updated department ${deptId} with ${doctorIds.length} doctors`
+      );
+    }
+
+    res.json({
+      success: true,
+      message: "Department-doctors sync completed successfully",
+      syncedDepartments: Object.keys(departmentDoctors).length,
+      totalDoctors: doctors.length,
+    });
+  } catch (error) {
+    console.error("Error syncing department-doctors:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to sync department-doctors",
       error: error.message,
     });
   }

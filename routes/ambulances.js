@@ -120,6 +120,23 @@ router.get("/:id", adminAuth, async (req, res) => {
   }
 });
 
+// Public get by id (no auth) for details page
+router.get("/public/:id", async (req, res) => {
+  try {
+    const ambulance = await Ambulance.findById(req.params.id);
+    if (!ambulance || !ambulance.isActive) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Ambulance not found" });
+    }
+    res.json({ success: true, data: { ambulance } });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch ambulance" });
+  }
+});
+
 // Create new ambulance (admin and above only)
 router.post("/", adminAuth, upload.single("image"), async (req, res) => {
   try {

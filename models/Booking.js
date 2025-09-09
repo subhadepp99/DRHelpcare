@@ -87,6 +87,15 @@ bookingSchema.pre("save", function (next) {
   next();
 });
 
+// Ensure bookingId exists before validation to satisfy the `required: true` constraint
+bookingSchema.pre("validate", function (next) {
+  if (!this.bookingId) {
+    this.bookingId =
+      "BK" + Date.now() + Math.random().toString(36).substr(2, 5).toUpperCase();
+  }
+  next();
+});
+
 // Index for efficient queries
 bookingSchema.index({ patient: 1, appointmentDate: 1 });
 bookingSchema.index({ doctor: 1, appointmentDate: 1 });

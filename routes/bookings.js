@@ -2,8 +2,10 @@ const express = require("express");
 const Booking = require("../models/Booking");
 const Doctor = require("../models/Doctor");
 const User = require("../models/User");
+const OTP = require("../models/OTP");
 const { auth } = require("../middleware/auth");
 const { createActivity } = require("../utils/activity");
+const { generateOTP, sendOTP, verifyOTP } = require("../utils/sms");
 
 const router = express.Router();
 
@@ -17,7 +19,7 @@ router.post("/", auth, async (req, res) => {
       patientDetails,
       symptoms,
       reasonForVisit,
-      paymentMethod = "card",
+      paymentMethod = "cash",
     } = req.body;
 
     // Validate doctor exists
@@ -62,7 +64,7 @@ router.post("/", auth, async (req, res) => {
       reasonForVisit,
       consultationFee: doctor.consultationFee,
       paymentMethod,
-      status: "confirmed", // Auto-confirm for now
+      status: "confirmed",
     });
 
     await booking.save();
@@ -94,6 +96,89 @@ router.post("/", auth, async (req, res) => {
       message: "Failed to create booking",
       error: error.message,
     });
+  }
+});
+
+// Send booking OTP to provided phone (no auth required)
+router.post("/send-otp", async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone is required" });
+    }
+
+    const otpCode = generateOTP();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    const otp = new OTP({
+      identifier: phone,
+      otp: otpCode,
+      type: "verification",
+      expiresAt,
+    });
+    await otp.save();
+
+    const smsResult = await sendOTP(phone, otpCode, "verification");
+
+    if (!smsResult.success) {
+      console.error("Booking OTP SMS failed:", smsResult);
+    }
+
+    res.json({ success: true, message: "OTP sent", expiresIn: "10 minutes" });
+  } catch (error) {
+    console.error("Send booking OTP error:", error);
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Failed to send OTP",
+        error: error.message,
+      });
+  }
+});
+
+// Verify booking OTP
+router.post("/verify-otp", async (req, res) => {
+  try {
+    const { phone, otp } = req.body;
+    if (!phone || !otp) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone and OTP are required" });
+    }
+
+    const otpRecord = await OTP.findOne({
+      identifier: phone,
+      type: "verification",
+      isUsed: false,
+      expiresAt: { $gt: new Date() },
+      attempts: { $lt: 3 },
+    });
+
+    if (!otpRecord) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid or expired OTP" });
+    }
+
+    if (!verifyOTP(otp, otpRecord.otp)) {
+      await otpRecord.incrementAttempts();
+      return res.status(400).json({ success: false, message: "Invalid OTP" });
+    }
+
+    await otpRecord.markAsUsed();
+    res.json({ success: true, message: "OTP verified" });
+  } catch (error) {
+    console.error("Verify booking OTP error:", error);
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Failed to verify OTP",
+        error: error.message,
+      });
   }
 });
 

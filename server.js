@@ -53,6 +53,8 @@ app.use(
       "https://drhelp.in",
       "http://localhost:3000",
       "https://localhost:3000",
+      "http://213.210.37.151:3000/",
+      "https://213.210.37.151:3000/",
     ], // frontend domain
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
@@ -74,6 +76,7 @@ app.use("/api/pathologies", require("./routes/pathology")); // Admin panel uses 
 app.use("/api/departments", require("./routes/department"));
 app.use("/api/bookings", require("./routes/bookings"));
 app.use("/api/ambulances", require("./routes/ambulances"));
+app.use("/api/faqs", require("./routes/faqs"));
 app.use("/api/access-requests", require("./routes/accessRequests"));
 app.use("/api/dashboard", require("./routes/dashboard"));
 app.use("/api/search", require("./routes/search"));

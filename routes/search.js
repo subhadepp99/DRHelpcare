@@ -3,6 +3,7 @@ const Doctor = require("../models/Doctor");
 const Clinic = require("../models/Clinic");
 const Pharmacy = require("../models/Pharmacy");
 const Ambulance = require("../models/Ambulance");
+const Department = require("../models/Department");
 
 const router = express.Router();
 
@@ -30,6 +31,7 @@ router.get("/", async (req, res) => {
       lng,
       city,
       specialization,
+      department,
       experience,
       fee,
       rating,
@@ -68,6 +70,59 @@ router.get("/", async (req, res) => {
     if (type === "all" || type === "doctors") {
       let baseQuery = { ...geoFilter, isActive: true };
       if (specialization) baseQuery.specialization = specialization;
+
+      // Handle department filtering
+      if (department) {
+        console.log("Department filter applied:", department);
+        console.log(
+          "Searching for department with name or heading matching:",
+          department
+        );
+
+        try {
+          // Find department by name (case-insensitive)
+          const departmentDoc = await Department.findOne({
+            $or: [
+              { name: new RegExp(department, "i") },
+              { heading: new RegExp(department, "i") },
+            ],
+            isActive: true,
+          });
+
+          console.log("Department search result:", departmentDoc);
+
+          if (departmentDoc) {
+            baseQuery.department = departmentDoc._id;
+            console.log(
+              "Found department ID:",
+              departmentDoc._id,
+              "for name:",
+              department
+            );
+            console.log("Department details:", {
+              id: departmentDoc._id,
+              name: departmentDoc.name,
+              heading: departmentDoc.heading,
+            });
+          } else {
+            console.log("No department found for:", department);
+            // Debug: Show all available departments
+            const allDepartments = await Department.find({
+              isActive: true,
+            }).select("name heading");
+            console.log(
+              "Available departments:",
+              allDepartments.map((d) => ({ name: d.name, heading: d.heading }))
+            );
+            // If department not found, return empty results
+            baseQuery.department = null;
+          }
+        } catch (error) {
+          console.error("Error finding department:", error);
+          // If error finding department, return empty results
+          baseQuery.department = null;
+        }
+      }
       if (experience) {
         const [min, max] = experience.split("-").map(Number);
         baseQuery.experience = max ? { $gte: min, $lte: max } : { $gte: min };
@@ -81,6 +136,11 @@ router.get("/", async (req, res) => {
       if (rating) {
         baseQuery["rating.average"] = { $gte: parseFloat(rating) };
       }
+
+      console.log(
+        "Final baseQuery for doctors:",
+        JSON.stringify(baseQuery, null, 2)
+      );
 
       let doctors;
       if (q && lat && lng) {
