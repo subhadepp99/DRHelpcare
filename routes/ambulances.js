@@ -153,7 +153,7 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
     const ambulance = new Ambulance(ambulanceData);
 
     if (req.file) {
-      ambulance.image = `/uploads/ambulances/${req.file.filename}`;
+      // Prefer storing public url only; avoid mixing types on image field
       ambulance.imageUrl = `/uploads/ambulances/${req.file.filename}`;
     }
 
@@ -222,12 +222,23 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       ambulanceData.perKmRate = parseFloat(ambulanceData.perKmRate);
 
     if (req.file) {
-      // Delete old image if exists
-      if (ambulance.image && ambulance.image.startsWith("/uploads/")) {
+      // Delete old image if exists (handle both string and object cases safely)
+      const existingPath =
+        typeof ambulance.imageUrl === "string" && ambulance.imageUrl
+          ? ambulance.imageUrl
+          : typeof ambulance.image === "string"
+          ? ambulance.image
+          : ambulance.image?.data || "";
+
+      if (
+        existingPath &&
+        typeof existingPath === "string" &&
+        existingPath.startsWith("/uploads/")
+      ) {
         const oldImagePath = path.join(
           __dirname,
           "..",
-          ambulance.image.replace("/uploads/", "uploads/")
+          existingPath.replace("/uploads/", "uploads/")
         );
         try {
           await fs.unlink(oldImagePath);
@@ -239,7 +250,8 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
         }
       }
 
-      ambulanceData.image = `/uploads/ambulances/${req.file.filename}`;
+      // Prefer storing public url only; avoid mixing types on image field
+      delete ambulanceData.image; // ensure no object/string mix
       ambulanceData.imageUrl = `/uploads/ambulances/${req.file.filename}`;
     }
 
@@ -293,16 +305,28 @@ router.delete("/:id", adminAuth, async (req, res) => {
     }
 
     // Delete image if it exists
-    if (ambulance.image && ambulance.image.startsWith("/uploads/")) {
-      const imagePath = path.join(
-        __dirname,
-        "..",
-        ambulance.image.replace("/uploads/", "uploads/")
-      );
-      try {
-        await fs.unlink(imagePath);
-      } catch (err) {
-        console.log("Image file not found or already deleted");
+    {
+      const existingPath =
+        typeof ambulance.imageUrl === "string" && ambulance.imageUrl
+          ? ambulance.imageUrl
+          : typeof ambulance.image === "string"
+          ? ambulance.image
+          : ambulance.image?.data || "";
+      if (
+        existingPath &&
+        typeof existingPath === "string" &&
+        existingPath.startsWith("/uploads/")
+      ) {
+        const imagePath = path.join(
+          __dirname,
+          "..",
+          existingPath.replace("/uploads/", "uploads/")
+        );
+        try {
+          await fs.unlink(imagePath);
+        } catch (err) {
+          console.log("Image file not found or already deleted");
+        }
       }
     }
 

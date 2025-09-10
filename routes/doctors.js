@@ -1,4 +1,5 @@
 const express = require("express");
+const mongoose = require("mongoose");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs").promises;
@@ -881,11 +882,11 @@ router.get("/meta/specializations", async (req, res) => {
 // Get doctor availability for a specific date range
 router.get("/:id/availability", async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { date, clinicId, startDate, endDate } = req.query;
     const doctorId = req.params.id;
 
     const doctor = await Doctor.findById(doctorId).select(
-      "bookingSchedule availableDateTime"
+      "bookingSchedule availableDateTime clinicDetails"
     );
     if (!doctor) {
       return res.status(404).json({
@@ -894,31 +895,83 @@ router.get("/:id/availability", async (req, res) => {
       });
     }
 
+    const normalizeSlots = (schedule) => {
+      if (!schedule) return [];
+      const slots = schedule.slots || [];
+      return slots
+        .filter((s) => s.isAvailable !== false)
+        .map((s) => ({
+          time: s.startTime,
+          endTime: s.endTime,
+          available: s.isAvailable !== false,
+          currentBookings: s.currentBookings || 0,
+          maxBookings: s.maxBookings || 1,
+        }));
+    };
+
+    // If a specific date is requested, return slots for that date
+    if (date) {
+      const day = new Date(date);
+      day.setHours(0, 0, 0, 0);
+
+      // If clinic context is provided, check clinic-specific schedule
+      if (clinicId) {
+        const cd = (doctor.clinicDetails || []).find(
+          (c) => c.clinic && c.clinic.toString() === clinicId
+        );
+        if (!cd) {
+          return res.status(400).json({
+            success: false,
+            message: "Doctor is not associated with the selected clinic",
+          });
+        }
+
+        const scheduleItem = (cd.clinicSchedule || []).find(
+          (s) => new Date(s.date).setHours(0, 0, 0, 0) === day.getTime()
+        );
+
+        return res.json({
+          success: true,
+          data: {
+            date: day,
+            clinicId,
+            slots: normalizeSlots(scheduleItem),
+          },
+        });
+      }
+
+      // General schedule
+      const scheduleItem = (doctor.bookingSchedule || []).find(
+        (s) => new Date(s.date).setHours(0, 0, 0, 0) === day.getTime()
+      );
+      return res.json({
+        success: true,
+        data: { date: day, slots: normalizeSlots(scheduleItem) },
+      });
+    }
+
+    // Fallback: range mode (kept for backwards compatibility)
     let availability = [];
+    const rangeStart = startDate ? new Date(startDate) : new Date();
+    const rangeEnd = endDate
+      ? new Date(endDate)
+      : new Date(Date.now() + 30 * 86400000);
 
-    // If specific date range is requested, filter by that
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-
-      if (doctor.bookingSchedule) {
-        availability = doctor.bookingSchedule.filter((schedule) => {
-          const scheduleDate = new Date(schedule.date);
-          return scheduleDate >= start && scheduleDate <= end;
-        });
-      }
+    if (clinicId) {
+      const cd = (doctor.clinicDetails || []).find(
+        (c) => c.clinic && c.clinic.toString() === clinicId
+      );
+      const schedules = (cd && cd.clinicSchedule) || [];
+      availability = schedules.filter((schedule) => {
+        const scheduleDate = new Date(schedule.date);
+        return scheduleDate >= rangeStart && scheduleDate <= rangeEnd;
+      });
     } else {
-      // Return next 30 days availability
-      const start = new Date();
-      const end = new Date();
-      end.setDate(end.getDate() + 30);
-
-      if (doctor.bookingSchedule) {
-        availability = doctor.bookingSchedule.filter((schedule) => {
-          const scheduleDate = new Date(schedule.date);
-          return scheduleDate >= start && scheduleDate <= end;
-        });
-      }
+      const schedules = doctor.bookingSchedule || [];
+      availability = schedules.filter((schedule) => {
+        const scheduleDate = new Date(schedule.date);
+        return scheduleDate >= rangeStart && scheduleDate <= rangeEnd;
+      });
     }
 
     res.json({
@@ -940,3 +993,113 @@ router.get("/:id/availability", async (req, res) => {
 });
 
 module.exports = router;
+
+// Update general (global) booking schedule for a doctor (Admin only)
+router.put("/:id/schedule", adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { bookingSchedule } = req.body;
+
+    if (!Array.isArray(bookingSchedule)) {
+      return res.status(400).json({
+        success: false,
+        message: "bookingSchedule must be an array",
+      });
+    }
+
+    const updated = await Doctor.findByIdAndUpdate(
+      id,
+      { bookingSchedule },
+      { new: true, runValidators: true }
+    );
+
+    if (!updated) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Doctor not found" });
+    }
+
+    await createActivity({
+      type: "doctor_updated",
+      message: `Updated booking schedule for doctor ${updated.name}`,
+      user: req.user.id,
+      targetId: updated._id,
+      targetModel: "Doctor",
+    });
+
+    res.json({ success: true, message: "Schedule updated", data: updated });
+  } catch (error) {
+    console.error("Update doctor schedule error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update schedule",
+      error: error.message,
+    });
+  }
+});
+
+// Update clinic-specific booking schedule for a doctor (Admin only)
+router.put("/:id/clinics/:clinicId/schedule", adminAuth, async (req, res) => {
+  try {
+    const { id, clinicId } = req.params;
+    const { clinicSchedule } = req.body;
+
+    if (!Array.isArray(clinicSchedule)) {
+      return res.status(400).json({
+        success: false,
+        message: "clinicSchedule must be an array",
+      });
+    }
+
+    // Ensure doctor exists and is associated with clinic
+    const doctor = await Doctor.findById(id).select("clinicDetails name");
+    if (!doctor) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Doctor not found" });
+    }
+
+    const hasClinic = (doctor.clinicDetails || []).some(
+      (cd) => cd.clinic && cd.clinic.toString() === clinicId
+    );
+    if (!hasClinic) {
+      return res.status(400).json({
+        success: false,
+        message: "Doctor is not associated with this clinic",
+      });
+    }
+
+    const updated = await Doctor.findOneAndUpdate(
+      { _id: id },
+      { $set: { "clinicDetails.$[elem].clinicSchedule": clinicSchedule } },
+      {
+        new: true,
+        arrayFilters: [
+          { "elem.clinic": new mongoose.Types.ObjectId(clinicId) },
+        ],
+        runValidators: true,
+      }
+    );
+
+    await createActivity({
+      type: "doctor_updated",
+      message: `Updated clinic schedule for doctor ${doctor.name}`,
+      user: req.user.id,
+      targetId: id,
+      targetModel: "Doctor",
+    });
+
+    res.json({
+      success: true,
+      message: "Clinic schedule updated",
+      data: updated,
+    });
+  } catch (error) {
+    console.error("Update clinic schedule error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update clinic schedule",
+      error: error.message,
+    });
+  }
+});

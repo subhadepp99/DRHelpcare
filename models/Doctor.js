@@ -214,6 +214,28 @@ const doctorSchema = new mongoose.Schema(
             isAvailable: { type: Boolean, default: true },
           },
         ],
+        // Date-wise schedule specific to this clinic
+        clinicSchedule: [
+          {
+            date: {
+              type: Date,
+              required: true,
+            },
+            isAvailable: {
+              type: Boolean,
+              default: true,
+            },
+            slots: [
+              {
+                startTime: { type: String, required: true },
+                endTime: { type: String, required: true },
+                isAvailable: { type: Boolean, default: true },
+                maxBookings: { type: Number, default: 1, min: 1 },
+                currentBookings: { type: Number, default: 0, min: 0 },
+              },
+            ],
+          },
+        ],
       },
     ],
     // Keep existing availability for backward compatibility

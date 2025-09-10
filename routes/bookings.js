@@ -20,10 +20,14 @@ router.post("/", auth, async (req, res) => {
       symptoms,
       reasonForVisit,
       paymentMethod = "cash",
+      clinicId,
     } = req.body;
 
     // Validate doctor exists
-    const doctor = await Doctor.findById(doctorId);
+    const doctor = await Doctor.findById(doctorId).populate(
+      "clinicDetails.clinic",
+      "name"
+    );
     if (!doctor) {
       return res.status(404).json({
         success: false,
@@ -31,7 +35,20 @@ router.post("/", auth, async (req, res) => {
       });
     }
 
-    // Check if slot is available
+    let selectedClinicDetail = null;
+    if (clinicId) {
+      selectedClinicDetail = (doctor.clinicDetails || []).find(
+        (cd) => cd.clinic && cd.clinic._id.toString() === clinicId
+      );
+      if (!selectedClinicDetail) {
+        return res.status(400).json({
+          success: false,
+          message: "Doctor is not associated with the selected clinic",
+        });
+      }
+    }
+
+    // Check if slot is available (conflict across doctor regardless of clinic)
     const existingBooking = await Booking.findOne({
       doctor: doctorId,
       appointmentDate: new Date(appointmentDate),
@@ -46,10 +63,67 @@ router.post("/", auth, async (req, res) => {
       });
     }
 
+    // Validate against schedule
+    const dateOnly = new Date(appointmentDate);
+    dateOnly.setHours(0, 0, 0, 0);
+    let isSlotAllowed = true;
+    let effectiveFee = doctor.consultationFee || doctor.doctorFees || 0;
+
+    if (selectedClinicDetail) {
+      // Use clinic-specific fee if provided
+      if (typeof selectedClinicDetail.consultationFee === "number") {
+        effectiveFee = selectedClinicDetail.consultationFee;
+      }
+
+      // Check clinic-specific date schedule
+      if (Array.isArray(selectedClinicDetail.clinicSchedule)) {
+        const daySchedule = selectedClinicDetail.clinicSchedule.find(
+          (s) => new Date(s.date).setHours(0, 0, 0, 0) === dateOnly.getTime()
+        );
+        if (daySchedule) {
+          if (daySchedule.isAvailable === false) {
+            isSlotAllowed = false;
+          } else {
+            const slot = (daySchedule.slots || []).find(
+              (sl) =>
+                sl.startTime === appointmentTime && sl.isAvailable !== false
+            );
+            if (!slot) isSlotAllowed = false;
+          }
+        }
+      }
+    } else {
+      // General doctor schedule
+      if (Array.isArray(doctor.bookingSchedule)) {
+        const daySchedule = doctor.bookingSchedule.find(
+          (s) => new Date(s.date).setHours(0, 0, 0, 0) === dateOnly.getTime()
+        );
+        if (daySchedule) {
+          if (daySchedule.isAvailable === false) {
+            isSlotAllowed = false;
+          } else {
+            const slot = (daySchedule.slots || []).find(
+              (sl) =>
+                sl.startTime === appointmentTime && sl.isAvailable !== false
+            );
+            if (!slot) isSlotAllowed = false;
+          }
+        }
+      }
+    }
+
+    if (!isSlotAllowed) {
+      return res.status(400).json({
+        success: false,
+        message: "Selected slot is not available",
+      });
+    }
+
     // Create booking
     const booking = new Booking({
       patient: req.user.id,
       doctor: doctorId,
+      clinic: clinicId || undefined,
       appointmentDate: new Date(appointmentDate),
       appointmentTime,
       patientDetails: {
@@ -62,7 +136,7 @@ router.post("/", auth, async (req, res) => {
       },
       symptoms,
       reasonForVisit,
-      consultationFee: doctor.consultationFee,
+      consultationFee: effectiveFee,
       paymentMethod,
       status: "confirmed",
     });
@@ -129,13 +203,11 @@ router.post("/send-otp", async (req, res) => {
     res.json({ success: true, message: "OTP sent", expiresIn: "10 minutes" });
   } catch (error) {
     console.error("Send booking OTP error:", error);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Failed to send OTP",
-        error: error.message,
-      });
+    res.status(500).json({
+      success: false,
+      message: "Failed to send OTP",
+      error: error.message,
+    });
   }
 });
 
@@ -172,13 +244,11 @@ router.post("/verify-otp", async (req, res) => {
     res.json({ success: true, message: "OTP verified" });
   } catch (error) {
     console.error("Verify booking OTP error:", error);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: "Failed to verify OTP",
-        error: error.message,
-      });
+    res.status(500).json({
+      success: false,
+      message: "Failed to verify OTP",
+      error: error.message,
+    });
   }
 });
 
