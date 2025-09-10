@@ -24,7 +24,8 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // Define allowed origins
 const allowedOrigins = [
   "http://localhost:3000", // local dev
-  "https://yourfrontenddomain.com", // production
+  "https://drhelp.in",
+  "http://drhelp.in", // production
   // Add any other frontend URLs here
 ];
 
