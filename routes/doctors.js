@@ -114,6 +114,7 @@ router.get("/", async (req, res) => {
     if (search) {
       query.$or = [
         { name: new RegExp(search, "i") },
+        { phone: new RegExp(search, "i") },
         { qualification: new RegExp(search, "i") },
         { bio: new RegExp(search, "i") },
       ];

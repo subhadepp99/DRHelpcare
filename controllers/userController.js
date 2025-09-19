@@ -50,9 +50,8 @@ exports.createUser = async (req, res) => {
 
     // Add profile image if uploaded
     if (req.file) {
-      // Set the full URL for the profile image
-      const baseUrl = process.env.API_URL || "http://localhost:5000";
-      userData.profileImageUrl = `${baseUrl}/uploads/users/${req.file.filename}`;
+      // Store relative URL; frontend will prepend base
+      userData.profileImageUrl = `/uploads/users/${req.file.filename}`;
     }
 
     const user = new User(userData);
@@ -206,15 +205,23 @@ exports.updateUser = async (req, res) => {
     }
 
     if (req.file) {
-      // Set the full URL for the profile image
-      const baseUrl = process.env.API_URL || "http://localhost:5000";
-      updates.profileImageUrl = `${baseUrl}/uploads/users/${req.file.filename}`;
+      // Store relative URL; frontend will prepend base
+      updates.profileImageUrl = `/uploads/users/${req.file.filename}`;
 
       // Remove the old profile image if it exists
       if (user.profileImageUrl) {
         try {
-          const oldImagePath = user.profileImageUrl.replace(baseUrl, "");
-          const fullOldPath = path.join(__dirname, "..", oldImagePath);
+          const urlOrPath = user.profileImageUrl;
+          let relativePath = urlOrPath;
+          if (/^https?:\/\//i.test(urlOrPath)) {
+            const u = new URL(urlOrPath);
+            relativePath = u.pathname;
+          }
+          const fullOldPath = path.join(
+            __dirname,
+            "..",
+            relativePath.replace(/^\//, "")
+          );
           if (fs.existsSync(fullOldPath)) {
             fs.unlinkSync(fullOldPath);
           }

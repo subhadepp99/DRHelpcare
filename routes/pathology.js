@@ -30,7 +30,7 @@ const upload = multer({
 // Test route to check if pathology is working
 router.get("/test", async (req, res) => {
   try {
-    console.log("Testing pathology endpoint...");
+    // console.log("Testing pathology endpoint...");
     const count = await Pathology.countDocuments();
 
     // Test if we can create a minimal pathology object
@@ -47,7 +47,7 @@ router.get("/test", async (req, res) => {
         phone: "1234567890",
         email: "test@test.com",
       });
-      console.log("Test pathology model created successfully");
+      // console.log("Test pathology model created successfully");
     } catch (modelError) {
       console.error("Test pathology model creation failed:", modelError);
     }
@@ -70,11 +70,11 @@ router.get("/test", async (req, res) => {
 // Get test packages - MUST come before /:id route
 router.get("/test-packages", async (req, res) => {
   try {
-    console.log("Fetching test packages...");
+    // console.log("Fetching test packages...");
 
     // First, let's check if there are any pathology records at all
     const totalCount = await Pathology.countDocuments();
-    console.log("Total pathology records:", totalCount);
+    // console.log("Total pathology records:", totalCount);
 
     // Since existing data might not have isPackage field, let's get all records
     // and filter by category or name patterns that suggest packages
@@ -84,14 +84,14 @@ router.get("/test-packages", async (req, res) => {
       )
       .limit(20);
 
-    console.log("All pathologies found:", allPathologies.length);
+    // console.log("All pathologies found:", allPathologies.length);
 
     // For now, return all pathologies as packages to ensure data is displayed
     // This can be refined later when we have better data structure
     const packages = allPathologies;
 
-    console.log("Filtered packages:", packages.length);
-    console.log("Packages:", packages);
+    // console.log("Filtered packages:", packages.length);
+    // console.log("Packages:", packages);
 
     res.json({
       success: true,
@@ -138,7 +138,31 @@ router.get("/", async (req, res) => {
   try {
     const pathologies = await Pathology.find()
       .select(
-        "name licenseNumber email phone address place state zipCode country servicesOffered testsOffered is24Hours imageUrl homeCollection"
+        [
+          "name",
+          "licenseNumber",
+          "email",
+          "phone",
+          "address",
+          "place",
+          "state",
+          "zipCode",
+          "country",
+          // core fields needed by admin list and edit modal
+          "price",
+          "sampleType",
+          "category",
+          "description",
+          "turnaroundTime",
+          "preparation",
+          "components",
+          // legacy/admin fields
+          "servicesOffered",
+          "testsOffered",
+          "is24Hours",
+          "imageUrl",
+          "homeCollection",
+        ].join(" ")
       )
       .sort({ createdAt: -1 });
 
@@ -162,7 +186,7 @@ router.get("/search", async (req, res) => {
   try {
     const { name = "", location = "" } = req.query;
 
-    console.log("Pathology search request:", { name, location });
+    // console.log("Pathology search request:", { name, location });
 
     const query = {};
 
@@ -185,13 +209,13 @@ router.get("/search", async (req, res) => {
       ];
     }
 
-    console.log("Pathology search query:", JSON.stringify(query, null, 2));
+    // console.log("Pathology search query:", JSON.stringify(query, null, 2));
 
     // First, let's see what pathologies exist in the database
     const allPathologies = await Pathology.find().select(
       "name place state address"
     );
-    console.log("All pathologies in database:", allPathologies);
+    // console.log("All pathologies in database:", allPathologies);
 
     const pathologies = await Pathology.find(query)
       .select(
@@ -199,20 +223,20 @@ router.get("/search", async (req, res) => {
       )
       .limit(20);
 
-    console.log(`Found ${pathologies.length} pathologies matching the search`);
-    console.log(
-      "Matching pathologies:",
-      pathologies.map((p) => ({
-        id: p._id,
-        name: p.name,
-        place: p.place,
-        state: p.state,
-        address: p.address,
-        category: p.category,
-        price: p.price,
-        discountedPrice: p.discountedPrice,
-      }))
-    );
+    // console.log(`Found ${pathologies.length} pathologies matching the search`);
+    // console.log(
+    //   "Matching pathologies:",
+    //   pathologies.map((p) => ({
+    //     id: p._id,
+    //     name: p.name,
+    //     place: p.place,
+    //     state: p.state,
+    //     address: p.address,
+    //     category: p.category,
+    //     price: p.price,
+    //     discountedPrice: p.discountedPrice,
+    //   }))
+    // );
 
     res.json({
       success: true,
@@ -236,7 +260,7 @@ router.get("/by-id/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    console.log("Get pathology by ID request:", { id });
+    // console.log("Get pathology by ID request:", { id });
 
     const pathology = await Pathology.findById(id).select("-__v");
 
@@ -247,10 +271,10 @@ router.get("/by-id/:id", async (req, res) => {
       });
     }
 
-    console.log("Found pathology:", {
-      id: pathology._id,
-      name: pathology.name,
-    });
+    // console.log("Found pathology:", {
+    //   id: pathology._id,
+    //   name: pathology.name,
+    // });
 
     res.json({
       success: true,
@@ -271,8 +295,8 @@ router.get("/by-id/:id", async (req, res) => {
 // Create new pathology (admin only)
 router.post("/", auth, upload.single("image"), async (req, res) => {
   try {
-    console.log("Auth check - User:", req.user);
-    console.log("Auth check - User role:", req.user?.role);
+    // console.log("Auth check - User:", req.user);
+    // console.log("Auth check - User role:", req.user?.role);
 
     if (req.user.role !== "admin" && req.user.role !== "superuser") {
       return res.status(403).json({
@@ -283,41 +307,87 @@ router.post("/", auth, upload.single("image"), async (req, res) => {
 
     const pathologyData = { ...req.body };
 
-    console.log(
-      "Received pathology data:",
-      JSON.stringify(pathologyData, null, 2)
-    );
-    console.log("User role:", req.user.role);
+    // Normalize optional unique-like fields so null doesn't collide
+    if (
+      pathologyData.email == null ||
+      String(pathologyData.email).trim() === ""
+    ) {
+      delete pathologyData.email;
+    }
+    if (
+      pathologyData.phone == null ||
+      String(pathologyData.phone).trim() === ""
+    ) {
+      delete pathologyData.phone;
+    }
+
+    // console.log(
+    //   "Received pathology data:",
+    //   JSON.stringify(pathologyData, null, 2)
+    // );
+    // console.log("User role:", req.user.role);
 
     // Parse JSON fields
     if (
-      pathologyData.servicesOffered &&
-      typeof pathologyData.servicesOffered === "string"
+      pathologyData.components &&
+      typeof pathologyData.components === "string"
     ) {
       try {
-        pathologyData.servicesOffered = JSON.parse(
-          pathologyData.servicesOffered
-        );
+        pathologyData.components = JSON.parse(pathologyData.components);
       } catch (e) {
-        pathologyData.servicesOffered = [];
+        pathologyData.components = [];
       }
     }
-    if (
-      pathologyData.testsOffered &&
-      typeof pathologyData.testsOffered === "string"
-    ) {
-      try {
-        pathologyData.testsOffered = JSON.parse(pathologyData.testsOffered);
-      } catch (e) {
-        pathologyData.testsOffered = [];
-      }
+    // Reconstruct homeCollection from FormData if sent as flat fields
+    const hasHc =
+      req.body["homeCollection[available]"] !== undefined ||
+      req.body["homeCollection[fee]"] !== undefined ||
+      req.body["homeCollection[areas]"] !== undefined ||
+      req.body["homeCollection[timing][start]"] !== undefined ||
+      req.body["homeCollection[timing][end]"] !== undefined;
+
+    if (hasHc) {
+      const availableRaw = req.body["homeCollection[available]"];
+      const feeRaw = req.body["homeCollection[fee]"];
+      const areasRaw = req.body["homeCollection[areas]"];
+      const startRaw = req.body["homeCollection[timing][start]"];
+      const endRaw = req.body["homeCollection[timing][end]"];
+
+      pathologyData.homeCollection = {
+        available:
+          availableRaw === true ||
+          availableRaw === "true" ||
+          availableRaw === 1 ||
+          availableRaw === "1",
+        fee: Number(feeRaw) || 0,
+        areas: Array.isArray(areasRaw)
+          ? areasRaw.filter((a) => a && String(a).trim())
+          : areasRaw
+          ? [String(areasRaw).trim()].filter((a) => a)
+          : [],
+        timing: {
+          start: startRaw ? String(startRaw) : "",
+          end: endRaw ? String(endRaw) : "",
+        },
+      };
     }
+
+    // If sent as a JSON string instead, parse it safely
     if (
-      pathologyData.homeCollection &&
-      typeof pathologyData.homeCollection === "string"
+      typeof pathologyData.homeCollection === "string" &&
+      pathologyData.homeCollection.trim().startsWith("{")
     ) {
       try {
-        pathologyData.homeCollection = JSON.parse(pathologyData.homeCollection);
+        const parsed = JSON.parse(pathologyData.homeCollection);
+        pathologyData.homeCollection = {
+          available: !!parsed.available,
+          fee: Number(parsed.fee) || 0,
+          areas: Array.isArray(parsed.areas) ? parsed.areas : [],
+          timing: {
+            start: parsed.timing?.start || "",
+            end: parsed.timing?.end || "",
+          },
+        };
       } catch (e) {
         pathologyData.homeCollection = {
           available: false,
@@ -327,68 +397,74 @@ router.post("/", auth, upload.single("image"), async (req, res) => {
         };
       }
     }
-
-    // Add image to database if uploaded
-    if (req.file) {
-      pathologyData.image = {
-        data: req.file.buffer,
-        contentType: req.file.mimetype,
-      };
-      // Keep imageUrl for backward compatibility
-      pathologyData.imageUrl = `data:${
-        req.file.mimetype
-      };base64,${req.file.buffer.toString("base64")}`;
-    }
-
-    // Ensure required fields have default values
-    if (!pathologyData.price || isNaN(pathologyData.price)) {
-      pathologyData.price = 0; // Default price
-    }
-
-    if (!pathologyData.category) {
-      pathologyData.category = "General"; // Default category
-    }
-
-    if (!pathologyData.description || pathologyData.description.trim() === "") {
-      pathologyData.description = "Pathology service"; // Default description
-    }
-
-    // Check for other required fields
+    // Set defaults for optional fields
+    if (!pathologyData.turnaroundTime)
+      pathologyData.turnaroundTime = "24 hours";
+    if (!pathologyData.preparation) pathologyData.preparation = "";
+    if (!pathologyData.isPackage) pathologyData.isPackage = false;
+    if (!pathologyData.isActive) pathologyData.isActive = true;
+    if (!pathologyData.components) pathologyData.components = [];
+    // Validate required fields
     const requiredFields = [
+      "name",
+      "category",
+      "price",
+      "sampleType",
       "address",
       "place",
       "state",
       "zipCode",
-      "phone",
-      "email",
     ];
     const missingFields = requiredFields.filter(
-      (field) => !pathologyData[field] || pathologyData[field].trim() === ""
+      (field) =>
+        !pathologyData[field] || pathologyData[field].toString().trim() === ""
     );
-
     if (missingFields.length > 0) {
-      console.warn("Missing required fields:", missingFields);
-      // Set default values for missing required fields
-      if (!pathologyData.address)
-        pathologyData.address = "Address not provided";
-      if (!pathologyData.place) pathologyData.place = "City not provided";
-      if (!pathologyData.state) pathologyData.state = "State not provided";
-      if (!pathologyData.zipCode) pathologyData.zipCode = "000000";
-      if (!pathologyData.phone) pathologyData.phone = "0000000000";
-      if (!pathologyData.email) pathologyData.email = "noreply@pathology.com";
+      return res.status(400).json({
+        success: false,
+        message: `Missing required fields: ${missingFields.join(", ")}`,
+      });
     }
 
-    console.log(
-      "Final pathology data before save:",
-      JSON.stringify(pathologyData, null, 2)
-    );
+    // Provide sensible defaults for missing optional/required-like fields
+    if (
+      !pathologyData.sampleType ||
+      String(pathologyData.sampleType).trim() === ""
+    ) {
+      pathologyData.sampleType = "Blood";
+    }
 
+    // If homeCollection is effectively empty, drop it to avoid schema cast issues on older deployments
+    if (pathologyData.homeCollection) {
+      const hc = pathologyData.homeCollection;
+      const isEmptyAreas =
+        !hc.areas || (Array.isArray(hc.areas) && hc.areas.length === 0);
+      const start = hc.timing?.start || "";
+      const end = hc.timing?.end || "";
+      const isEmptyTiming = !start && !end;
+      if (
+        (hc.available === false || hc.available === "false") &&
+        (Number(hc.fee) || 0) === 0 &&
+        isEmptyAreas &&
+        isEmptyTiming
+      ) {
+        delete pathologyData.homeCollection;
+      }
+    }
+
+    // console.log(
+    //   "Final pathology data before save:",
+    //   JSON.stringify(pathologyData, null, 2)
+    // );
+
+    let createdPathology;
     try {
       const pathology = new Pathology(pathologyData);
-      console.log("Pathology model created successfully");
+      // console.log("Pathology model created successfully");
 
       await pathology.save();
-      console.log("Pathology saved successfully");
+      // console.log("Pathology saved successfully");
+      createdPathology = pathology;
     } catch (saveError) {
       console.error("Save error details:", {
         name: saveError.name,
@@ -400,7 +476,7 @@ router.post("/", auth, upload.single("image"), async (req, res) => {
 
     res.status(201).json({
       success: true,
-      data: pathology,
+      data: createdPathology,
     });
   } catch (error) {
     console.error("Error creating pathology:", error);
@@ -420,8 +496,7 @@ router.post("/", auth, upload.single("image"), async (req, res) => {
           .map((e) => e.message)
           .join(", ");
     } else if (error.code === 11000) {
-      errorMessage =
-        "Duplicate key error - this email or license number already exists";
+      errorMessage = "Duplicate key error - this value already exists";
     }
 
     res.status(500).json({
@@ -460,8 +535,8 @@ router.get("/:id", async (req, res) => {
 // Update pathology (admin only)
 router.put("/:id", auth, upload.single("image"), async (req, res) => {
   try {
-    console.log("Auth check - User:", req.user);
-    console.log("Auth check - User role:", req.user?.role);
+    // console.log("Auth check - User:", req.user);
+    // console.log("Auth check - User role:", req.user?.role);
 
     if (req.user.role !== "admin" && req.user.role !== "superuser") {
       return res.status(403).json({
@@ -472,10 +547,26 @@ router.put("/:id", auth, upload.single("image"), async (req, res) => {
 
     const updates = { ...req.body };
 
-    console.log("Received update data:", JSON.stringify(updates, null, 2));
-    console.log("User role:", req.user.role);
+    // Normalize optional unique-like fields so null doesn't collide on update
+    if (updates.email != null && String(updates.email).trim() === "") {
+      updates.email = undefined;
+    }
+    if (updates.phone != null && String(updates.phone).trim() === "") {
+      updates.phone = undefined;
+    }
 
-    // Parse JSON fields
+    // console.log("Received update data:", JSON.stringify(updates, null, 2));
+    // console.log("User role:", req.user.role);
+
+    // Parse JSON-ish fields possibly sent via multipart/form-data
+    if (updates.components && typeof updates.components === "string") {
+      try {
+        updates.components = JSON.parse(updates.components);
+      } catch (e) {
+        // Accept empty array string or invalid JSON gracefully
+        updates.components = [];
+      }
+    }
     if (
       updates.servicesOffered &&
       typeof updates.servicesOffered === "string"
@@ -493,9 +584,55 @@ router.put("/:id", auth, upload.single("image"), async (req, res) => {
         updates.testsOffered = [];
       }
     }
-    if (updates.homeCollection && typeof updates.homeCollection === "string") {
+
+    // Support bracketed homeCollection fields from FormData
+    const hasHcUpdate =
+      req.body["homeCollection[available]"] !== undefined ||
+      req.body["homeCollection[fee]"] !== undefined ||
+      req.body["homeCollection[areas]"] !== undefined ||
+      req.body["homeCollection[timing][start]"] !== undefined ||
+      req.body["homeCollection[timing][end]"] !== undefined;
+
+    if (hasHcUpdate) {
+      const availableRaw = req.body["homeCollection[available]"];
+      const feeRaw = req.body["homeCollection[fee]"];
+      const areasRaw = req.body["homeCollection[areas]"];
+      const startRaw = req.body["homeCollection[timing][start]"];
+      const endRaw = req.body["homeCollection[timing][end]"];
+
+      updates.homeCollection = {
+        available:
+          availableRaw === true ||
+          availableRaw === "true" ||
+          availableRaw === 1 ||
+          availableRaw === "1",
+        fee: Number(feeRaw) || 0,
+        areas: Array.isArray(areasRaw)
+          ? areasRaw.filter((a) => a && String(a).trim())
+          : areasRaw
+          ? [String(areasRaw).trim()].filter((a) => a)
+          : [],
+        timing: {
+          start: startRaw ? String(startRaw) : "",
+          end: endRaw ? String(endRaw) : "",
+        },
+      };
+    } else if (
+      updates.homeCollection &&
+      typeof updates.homeCollection === "string"
+    ) {
+      // Or if homeCollection came as a JSON string
       try {
-        updates.homeCollection = JSON.parse(updates.homeCollection);
+        const parsed = JSON.parse(updates.homeCollection);
+        updates.homeCollection = {
+          available: !!parsed.available,
+          fee: Number(parsed.fee) || 0,
+          areas: Array.isArray(parsed.areas) ? parsed.areas : [],
+          timing: {
+            start: parsed.timing?.start || "",
+            end: parsed.timing?.end || "",
+          },
+        };
       } catch (e) {
         updates.homeCollection = {
           available: false,
@@ -504,6 +641,20 @@ router.put("/:id", auth, upload.single("image"), async (req, res) => {
           timing: { start: "", end: "" },
         };
       }
+    }
+
+    // Coerce primitive types where needed
+    if (updates.price != null) {
+      const n = Number(updates.price);
+      updates.price = isNaN(n) ? 0 : n;
+    }
+    if (updates.isPackage != null) {
+      updates.isPackage =
+        updates.isPackage === true || updates.isPackage === "true";
+    }
+    if (updates.isActive != null) {
+      updates.isActive =
+        updates.isActive === true || updates.isActive === "true";
     }
 
     const pathology = await Pathology.findById(req.params.id);
@@ -535,7 +686,25 @@ router.put("/:id", auth, upload.single("image"), async (req, res) => {
       updates.price = 0; // Default price
     }
 
-    console.log("Final update data:", JSON.stringify(updates, null, 2));
+    // If homeCollection is effectively empty, drop it to avoid cast issues
+    if (updates.homeCollection) {
+      const hc = updates.homeCollection;
+      const isEmptyAreas =
+        !hc.areas || (Array.isArray(hc.areas) && hc.areas.length === 0);
+      const start = hc.timing?.start || "";
+      const end = hc.timing?.end || "";
+      const isEmptyTiming = !start && !end;
+      if (
+        (hc.available === false || hc.available === "false") &&
+        (Number(hc.fee) || 0) === 0 &&
+        isEmptyAreas &&
+        isEmptyTiming
+      ) {
+        delete updates.homeCollection;
+      }
+    }
+
+    // console.log("Final update data:", JSON.stringify(updates, null, 2));
 
     const updatedPathology = await Pathology.findByIdAndUpdate(
       req.params.id,
@@ -565,8 +734,7 @@ router.put("/:id", auth, upload.single("image"), async (req, res) => {
           .map((e) => e.message)
           .join(", ");
     } else if (error.code === 11000) {
-      errorMessage =
-        "Duplicate key error - this email or license number already exists";
+      errorMessage = "Duplicate key error - this value already exists";
     }
 
     res.status(500).json({

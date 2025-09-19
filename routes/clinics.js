@@ -48,8 +48,12 @@ router.get("/", async (req, res) => {
     if (search) {
       query.$or = [
         { name: new RegExp(search, "i") },
+        { phone: new RegExp(search, "i") },
+        { email: new RegExp(search, "i") },
         { services: { $in: [new RegExp(search, "i")] } },
-        { "address.city": new RegExp(search, "i") },
+        { place: new RegExp(search, "i") },
+        { state: new RegExp(search, "i") },
+        { address: new RegExp(search, "i") },
       ];
     }
 

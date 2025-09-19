@@ -4,12 +4,45 @@ const morgan = require("morgan");
 const dotenv = require("dotenv");
 const connectDB = require("./config/database");
 const path = require("path"); // Added for path.join
+const mongoose = require("mongoose");
 
 // Load environment variables
 dotenv.config();
 
 // Connect to MongoDB
 connectDB();
+
+// Drop obsolete indexes once DB is connected (idempotent)
+mongoose.connection.once("open", async () => {
+  try {
+    const collection = mongoose.connection.collection("pathologies");
+    const indexes = await collection.indexes();
+    // Drop obsolete index
+    const hasLicenseIdx = indexes.some((i) => i.name === "licenseNumber_1");
+    if (hasLicenseIdx) {
+      await collection.dropIndex("licenseNumber_1");
+      console.log("Dropped obsolete index licenseNumber_1 on pathologies");
+    }
+    // Ensure email index is partial unique (only enforce when email is a string)
+    const emailIdx = indexes.find((i) => i.name === "email_1");
+    if (emailIdx) {
+      // Drop and recreate as partial unique to avoid dup null errors
+      await collection.dropIndex("email_1");
+      console.log("Dropped existing email_1 index on pathologies");
+    }
+    await collection.createIndex(
+      { email: 1 },
+      {
+        name: "email_1",
+        unique: true,
+        partialFilterExpression: { email: { $type: "string" } },
+      }
+    );
+    console.log("Created partial unique index email_1 on pathologies");
+  } catch (e) {
+    console.warn("Index cleanup skipped:", e.message);
+  }
+});
 
 const app = express();
 
@@ -77,6 +110,7 @@ app.use("/api/pathologies", require("./routes/pathology")); // Admin panel uses 
 app.use("/api/departments", require("./routes/department"));
 app.use("/api/bookings", require("./routes/bookings"));
 app.use("/api/ambulances", require("./routes/ambulances"));
+app.use("/api/banners", require("./routes/banners"));
 app.use("/api/faqs", require("./routes/faqs"));
 app.use("/api/access-requests", require("./routes/accessRequests"));
 app.use("/api/dashboard", require("./routes/dashboard"));

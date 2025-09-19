@@ -555,6 +555,26 @@ router.delete("/:bookingId", auth, async (req, res) => {
       });
     }
 
+    // Disallow cancellation for past bookings
+    try {
+      const scheduled = new Date(booking.appointmentDate);
+      if (booking.appointmentTime) {
+        const [h, m] = String(booking.appointmentTime)
+          .split(":")
+          .map((v) => parseInt(v, 10) || 0);
+        scheduled.setHours(h, m, 0, 0);
+      }
+      if (new Date() > scheduled) {
+        return res.status(400).json({
+          success: false,
+          message: "Cannot cancel a past/expired booking",
+        });
+      }
+    } catch (e) {
+      // If parsing fails, continue without blocking but log for debug
+      console.error("Cancel booking schedule parse error:", e);
+    }
+
     // Update booking status
     booking.status = "cancelled";
     booking.notes = reason || "Cancelled by user";

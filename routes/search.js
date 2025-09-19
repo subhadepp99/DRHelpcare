@@ -4,6 +4,7 @@ const Clinic = require("../models/Clinic");
 const Pharmacy = require("../models/Pharmacy");
 const Ambulance = require("../models/Ambulance");
 const Department = require("../models/Department");
+const Pathology = require("../models/Pathology");
 
 const router = express.Router();
 
@@ -39,7 +40,6 @@ router.get("/", async (req, res) => {
       limit = 20,
       page = 1,
     } = req.query;
-
     // Handle search queries with different character lengths
     const hasValidSearchQuery = q && q.trim().length >= 3;
     const hasShortQuery = q && q.trim().length > 0 && q.trim().length < 3;
@@ -65,6 +65,9 @@ router.get("/", async (req, res) => {
     } else if (city) {
       geoFilter = { "address.city": new RegExp(city, "i") };
     }
+
+    // Substring location matcher used across entities
+    const locationRegex = city ? new RegExp(city, "i") : null;
 
     // --- DOCTORS ---
     if (type === "all" || type === "doctors") {
@@ -145,7 +148,18 @@ router.get("/", async (req, res) => {
       let doctors;
       if (q && lat && lng) {
         // Geo first, then manual text search
-        doctors = await Doctor.find(baseQuery)
+        const doctorLocationFilter = locationRegex
+          ? {
+              $or: [
+                { "address.city": locationRegex },
+                { "address.state": locationRegex },
+                { city: locationRegex },
+                { state: locationRegex },
+              ],
+            }
+          : {};
+
+        doctors = await Doctor.find({ ...baseQuery, ...doctorLocationFilter })
           .select("-reviews -__v")
           .populate("department", "name")
           .populate("clinicDetails.clinic", "name address place state city")
@@ -156,32 +170,68 @@ router.get("/", async (req, res) => {
           .filter((d) => matchesText(d, q, ["name", "specialization", "bio"]))
           .slice(0, lim);
       } else if (q) {
-        // Text search only
-        try {
-          doctors = await Doctor.find({ $text: { $search: q }, ...baseQuery })
-            .select("-reviews -__v")
-            .populate("department", "name")
-            .populate("clinicDetails.clinic", "name address place state city")
-            .limit(lim)
-            .skip(skip)
-            .sort({ score: { $meta: "textScore" } });
-        } catch (error) {
-          // Fallback to manual search if text index fails
-          doctors = await Doctor.find(baseQuery)
-            .select("-reviews -__v")
-            .populate("department", "name")
-            .populate("clinicDetails.clinic", "name address place state city")
-            .limit(lim * 2)
-            .skip(skip)
-            .lean();
+        // Case-insensitive substring search including department name/heading matches
+        const regex = new RegExp(q, "i");
 
-          doctors = doctors
-            .filter((d) => matchesText(d, q, ["name", "specialization", "bio"]))
-            .slice(0, lim);
+        // Find matching departments by name/heading/specialization
+        let departmentIds = [];
+        try {
+          const deptDocs = await Department.find({
+            $or: [
+              { name: regex },
+              { heading: regex },
+              { specialization: regex },
+            ],
+            isActive: true,
+          }).select("_id");
+          departmentIds = deptDocs.map((d) => d._id);
+        } catch (e) {
+          departmentIds = [];
         }
+
+        const doctorLocationFilter = locationRegex
+          ? {
+              $or: [
+                { "address.city": locationRegex },
+                { "address.state": locationRegex },
+                { city: locationRegex },
+                { state: locationRegex },
+              ],
+            }
+          : {};
+
+        doctors = await Doctor.find({
+          ...baseQuery,
+          ...doctorLocationFilter,
+          $or: [
+            { name: regex },
+            { specialization: regex },
+            { bio: regex },
+            departmentIds.length
+              ? { department: { $in: departmentIds } }
+              : null,
+          ].filter(Boolean),
+        })
+          .select("-reviews -__v")
+          .populate("department", "name")
+          .populate("clinicDetails.clinic", "name address place state city")
+          .limit(lim)
+          .skip(skip)
+          .sort({ name: 1 });
       } else {
         // Just geo or no q
-        doctors = await Doctor.find(baseQuery)
+        const doctorLocationFilter = locationRegex
+          ? {
+              $or: [
+                { "address.city": locationRegex },
+                { "address.state": locationRegex },
+                { city: locationRegex },
+                { state: locationRegex },
+              ],
+            }
+          : {};
+
+        doctors = await Doctor.find({ ...baseQuery, ...doctorLocationFilter })
           .select("-reviews -__v")
           .populate("department", "name")
           .populate("clinicDetails.clinic", "name address place state city")
@@ -206,29 +256,74 @@ router.get("/", async (req, res) => {
         clinics = clinics
           .filter((cl) => matchesText(cl, q, ["name"]))
           .slice(0, lim);
-      } else if (hasValidSearchQuery) {
-        try {
-          clinics = await Clinic.find({ $text: { $search: q }, ...baseQuery })
-            .select("-reviews -__v")
-            .populate("doctors.doctor", "name qualification experience")
-            .limit(lim)
-            .skip(skip)
-            .sort({ score: { $meta: "textScore" } });
-        } catch (error) {
-          // Fallback to manual search if text index fails
-          clinics = await Clinic.find(baseQuery)
-            .select("-reviews -__v")
-            .populate("doctors.doctor", "name qualification experience")
-            .limit(lim * 2)
-            .skip(skip)
-            .lean();
+      } else if (q) {
+        const regex = new RegExp(q, "i");
 
-          clinics = clinics
-            .filter((cl) => matchesText(cl, q, ["name"]))
-            .slice(0, lim);
+        // Find matching departments
+        let departmentIds = [];
+        try {
+          const deptDocs = await Department.find({
+            $or: [
+              { name: regex },
+              { heading: regex },
+              { specialization: regex },
+            ],
+            isActive: true,
+          }).select("_id");
+          departmentIds = deptDocs.map((d) => d._id);
+        } catch (e) {
+          departmentIds = [];
         }
+
+        // Find doctors matching query or department
+        const doctorMatch = await Doctor.find({
+          isActive: true,
+          $or: [
+            { name: regex },
+            { specialization: regex },
+            departmentIds.length
+              ? { department: { $in: departmentIds } }
+              : null,
+          ].filter(Boolean),
+        }).select("_id");
+        const doctorIds = doctorMatch.map((d) => d._id);
+
+        const clinicLocationFilter = locationRegex
+          ? {
+              $or: [
+                { "address.city": locationRegex },
+                { "address.state": locationRegex },
+                { place: locationRegex },
+              ],
+            }
+          : {};
+
+        clinics = await Clinic.find({
+          ...baseQuery,
+          ...clinicLocationFilter,
+          $or: [
+            { name: regex },
+            { services: { $in: [regex] } },
+            doctorIds.length ? { "doctors.doctor": { $in: doctorIds } } : null,
+          ].filter(Boolean),
+        })
+          .select("-reviews -__v")
+          .populate("doctors.doctor", "name qualification experience")
+          .limit(lim)
+          .skip(skip)
+          .sort({ name: 1 });
       } else {
-        clinics = await Clinic.find(baseQuery)
+        const clinicLocationFilter = locationRegex
+          ? {
+              $or: [
+                { "address.city": locationRegex },
+                { "address.state": locationRegex },
+                { place: locationRegex },
+              ],
+            }
+          : {};
+
+        clinics = await Clinic.find({ ...baseQuery, ...clinicLocationFilter })
           .select("-reviews -__v")
           .populate("doctors.doctor", "name qualification experience")
           .limit(lim)
@@ -236,6 +331,52 @@ router.get("/", async (req, res) => {
           .sort({ "rating.average": -1 });
       }
       results.clinics = clinics;
+    }
+
+    // --- PATHOLOGIES ---
+    if (type === "all" || type === "pathology") {
+      let baseQuery = { isActive: true };
+      let pathologies;
+      if (q) {
+        const regex = new RegExp(q, "i");
+        const pathologyLocationFilter = locationRegex
+          ? {
+              $or: [
+                { place: locationRegex },
+                { state: locationRegex },
+                { address: locationRegex },
+              ],
+            }
+          : {};
+
+        pathologies = await Pathology.find({
+          ...baseQuery,
+          ...pathologyLocationFilter,
+          $or: [{ name: regex }, { category: regex }, { description: regex }],
+        })
+          .limit(lim)
+          .skip(skip)
+          .sort({ name: 1 });
+      } else {
+        const pathologyLocationFilter = locationRegex
+          ? {
+              $or: [
+                { place: locationRegex },
+                { state: locationRegex },
+                { address: locationRegex },
+              ],
+            }
+          : {};
+
+        pathologies = await Pathology.find({
+          ...baseQuery,
+          ...pathologyLocationFilter,
+        })
+          .limit(lim)
+          .skip(skip)
+          .sort({ createdAt: -1 });
+      }
+      results.pathologies = pathologies;
     }
 
     // --- PHARMACIES ---
@@ -290,7 +431,20 @@ router.get("/", async (req, res) => {
       let ambulances;
       if (q && lat && lng) {
         // Geo first, then manual text search
-        ambulances = await Ambulance.find(baseQuery)
+        const ambulanceLocationFilter = locationRegex
+          ? {
+              $or: [
+                { city: locationRegex },
+                { state: locationRegex },
+                { location: locationRegex },
+              ],
+            }
+          : {};
+
+        ambulances = await Ambulance.find({
+          ...baseQuery,
+          ...ambulanceLocationFilter,
+        })
           .limit(lim * 5) // get extra for manual filtering
           .lean();
 
@@ -300,16 +454,40 @@ router.get("/", async (req, res) => {
       } else if (q) {
         try {
           // Try text search first
+          const ambulanceLocationFilter = locationRegex
+            ? {
+                $or: [
+                  { city: locationRegex },
+                  { state: locationRegex },
+                  { location: locationRegex },
+                ],
+              }
+            : {};
+
           ambulances = await Ambulance.find({
             $text: { $search: q },
             ...baseQuery,
+            ...ambulanceLocationFilter,
           })
             .limit(lim)
             .skip(skip)
             .sort({ score: { $meta: "textScore" } });
         } catch (error) {
           // Fallback to manual search if text index fails
-          ambulances = await Ambulance.find(baseQuery)
+          const ambulanceLocationFilter = locationRegex
+            ? {
+                $or: [
+                  { city: locationRegex },
+                  { state: locationRegex },
+                  { location: locationRegex },
+                ],
+              }
+            : {};
+
+          ambulances = await Ambulance.find({
+            ...baseQuery,
+            ...ambulanceLocationFilter,
+          })
             .limit(lim * 2)
             .skip(skip)
             .lean();
@@ -319,7 +497,20 @@ router.get("/", async (req, res) => {
             .slice(0, lim);
         }
       } else {
-        ambulances = await Ambulance.find(baseQuery)
+        const ambulanceLocationFilter = locationRegex
+          ? {
+              $or: [
+                { city: locationRegex },
+                { state: locationRegex },
+                { location: locationRegex },
+              ],
+            }
+          : {};
+
+        ambulances = await Ambulance.find({
+          ...baseQuery,
+          ...ambulanceLocationFilter,
+        })
           .limit(lim)
           .skip(skip)
           .sort({ isAvailable: -1, name: 1 });
@@ -360,11 +551,26 @@ router.get("/", async (req, res) => {
 router.get("/suggestions", async (req, res) => {
   try {
     const { q, type = "all" } = req.query;
-    if (!q || q.length < 1) {
-      return res.json({ suggestions: [] });
-    }
     const suggestions = [];
-    const regex = new RegExp(q, "i");
+    const hasQuery = typeof q === "string" && q.length > 0;
+    const regex = hasQuery ? new RegExp(q, "i") : null;
+
+    // Default suggestions when no query: show departments
+    if (!hasQuery) {
+      const depts = await Department.find({ isActive: true })
+        .select("name heading specialization")
+        .limit(10)
+        .sort({ name: 1 });
+      depts.forEach((d) => {
+        suggestions.push({
+          type: "department",
+          text: d.heading || d.name,
+          subtext: d.specialization || "Department",
+          id: d._id,
+        });
+      });
+      return res.json({ suggestions });
+    }
 
     if (type === "all" || type === "doctors") {
       let query = { isActive: true };
@@ -496,6 +702,16 @@ router.get("/locations", async (req, res) => {
       .select("city state location")
       .lean();
 
+    // Get locations from pathologies
+    const pathologies = await Pathology.find({ isActive: true })
+      .select("place state address")
+      .lean();
+    pathologies.forEach((p) => {
+      if (p.place) locations.add(p.place);
+      if (p.state) locations.add(p.state);
+      if (p.address) locations.add(p.address);
+    });
+
     ambulances.forEach((ambulance) => {
       if (ambulance.city) locations.add(ambulance.city);
       if (ambulance.state) locations.add(ambulance.state);
@@ -503,7 +719,11 @@ router.get("/locations", async (req, res) => {
     });
 
     // Convert to array and sort alphabetically
-    const locationsArray = Array.from(locations).filter(Boolean).sort();
+    // Build suggestions as "place, state" style when both available
+    const normalized = new Set();
+    const raw = Array.from(locations).filter(Boolean);
+    raw.forEach((loc) => normalized.add(String(loc).trim()));
+    const locationsArray = Array.from(normalized).sort();
 
     res.json({
       success: true,
