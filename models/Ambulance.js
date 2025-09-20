@@ -43,7 +43,7 @@ const ambulanceSchema = new mongoose.Schema(
       default: true,
     },
     image: {
-      data: String, // File path
+      data: Buffer,
       contentType: String,
     },
     imageUrl: String, // Public URL for the image

@@ -1,43 +1,14 @@
 const express = require("express");
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs").promises;
 const { adminAuth } = require("../middleware/auth");
 const Banner = require("../models/Banner");
 
 const router = express.Router();
 
-// Store banner images on disk similar to doctors/ambulances
-const storage = multer.diskStorage({
-  destination: async (req, file, cb) => {
-    const uploadPath = path.join(__dirname, "..", "uploads", "banners");
-    try {
-      await fs.mkdir(uploadPath, { recursive: true });
-      cb(null, uploadPath);
-    } catch (error) {
-      cb(error, null);
-    }
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(
-      null,
-      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname)
-    );
-  },
-});
-
+// Store banner images in DB (memory storage)
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const allowed = /jpeg|jpg|png|gif|webp/;
-    const ok =
-      allowed.test(path.extname(file.originalname).toLowerCase()) &&
-      allowed.test(file.mimetype);
-    if (ok) return cb(null, true);
-    cb(new Error("Only image files are allowed"));
-  },
 });
 
 // Public: list active banners
@@ -48,7 +19,7 @@ router.get("/", async (req, res) => {
     if (placement) query.placement = placement;
     const banners = await Banner.find(query)
       .sort({ order: 1, createdAt: -1 })
-      .select("title imageUrl linkUrl order isActive placement");
+      .select("title image imageUrl linkUrl order isActive placement");
     res.json({ success: true, data: { banners } });
   } catch (error) {
     res.status(500).json({
@@ -78,8 +49,11 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       placement,
     };
 
-    if (req.file) {
-      bannerData.imageUrl = `/uploads/banners/${req.file.filename}`;
+    if (req.file && req.file.buffer) {
+      bannerData.image = {
+        data: req.file.buffer.toString("base64"),
+        contentType: req.file.mimetype,
+      };
     } else if (imageUrl) {
       bannerData.imageUrl = imageUrl;
     } else {
@@ -122,19 +96,12 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
         .status(404)
         .json({ success: false, message: "Banner not found" });
 
-    if (req.file) {
-      // delete old local file if exists
-      if (banner.imageUrl && banner.imageUrl.startsWith("/uploads/")) {
-        const oldPath = path.join(
-          __dirname,
-          "..",
-          banner.imageUrl.replace("/uploads/", "uploads/")
-        );
-        try {
-          await fs.unlink(oldPath);
-        } catch {}
-      }
-      updates.imageUrl = `/uploads/banners/${req.file.filename}`;
+    if (req.file && req.file.buffer) {
+      updates.image = {
+        data: req.file.buffer.toString("base64"),
+        contentType: req.file.mimetype,
+      };
+      updates.imageUrl = undefined;
     }
 
     Object.assign(banner, updates);
@@ -165,17 +132,6 @@ router.delete("/:id", adminAuth, async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Banner not found" });
-
-    if (banner.imageUrl && banner.imageUrl.startsWith("/uploads/")) {
-      const filePath = path.join(
-        __dirname,
-        "..",
-        banner.imageUrl.replace("/uploads/", "uploads/")
-      );
-      try {
-        await fs.unlink(filePath);
-      } catch {}
-    }
 
     await banner.deleteOne();
     res.json({ success: true, message: "Banner deleted" });

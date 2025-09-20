@@ -3,9 +3,9 @@ const mongoose = require("mongoose");
 const bannerSchema = new mongoose.Schema(
   {
     title: { type: String, trim: true },
-    imageUrl: { type: String, required: true },
+    imageUrl: { type: String },
     image: {
-      data: String, // legacy/path string if ever needed
+      data: String, // base64
       contentType: String,
     },
     linkUrl: { type: String, trim: true },

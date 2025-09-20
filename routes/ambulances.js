@@ -1,51 +1,15 @@
 const express = require("express");
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs").promises;
 const Ambulance = require("../models/Ambulance");
 const { auth, adminAuth } = require("../middleware/auth");
 const { createActivity } = require("../utils/activity");
 
 const router = express.Router();
 
-// Configure multer for image uploads
-const storage = multer.diskStorage({
-  destination: async (req, file, cb) => {
-    const uploadPath = path.join(__dirname, "..", "uploads", "ambulances");
-    try {
-      await fs.mkdir(uploadPath, { recursive: true });
-      cb(null, uploadPath);
-    } catch (error) {
-      cb(error, null);
-    }
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(
-      null,
-      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname)
-    );
-  },
-});
-
+// Configure multer for image uploads in memory
 const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-  },
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif/;
-    const extname = allowedTypes.test(
-      path.extname(file.originalname).toLowerCase()
-    );
-    const mimetype = allowedTypes.test(file.mimetype);
-
-    if (mimetype && extname) {
-      return cb(null, true);
-    } else {
-      cb(new Error("Only image files are allowed!"), false);
-    }
-  },
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
 });
 
 // Get all ambulances (admin and above only)
@@ -152,9 +116,12 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
 
     const ambulance = new Ambulance(ambulanceData);
 
-    if (req.file) {
-      // Prefer storing public url only; avoid mixing types on image field
-      ambulance.imageUrl = `/uploads/ambulances/${req.file.filename}`;
+    if (req.file && req.file.buffer) {
+      ambulance.image = {
+        data: req.file.buffer,
+        contentType: req.file.mimetype,
+      };
+      ambulance.imageUrl = undefined;
     }
 
     await ambulance.save();
@@ -221,38 +188,12 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
     if (ambulanceData.perKmRate)
       ambulanceData.perKmRate = parseFloat(ambulanceData.perKmRate);
 
-    if (req.file) {
-      // Delete old image if exists (handle both string and object cases safely)
-      const existingPath =
-        typeof ambulance.imageUrl === "string" && ambulance.imageUrl
-          ? ambulance.imageUrl
-          : typeof ambulance.image === "string"
-          ? ambulance.image
-          : ambulance.image?.data || "";
-
-      if (
-        existingPath &&
-        typeof existingPath === "string" &&
-        existingPath.startsWith("/uploads/")
-      ) {
-        const oldImagePath = path.join(
-          __dirname,
-          "..",
-          existingPath.replace("/uploads/", "uploads/")
-        );
-        try {
-          await fs.unlink(oldImagePath);
-        } catch (error) {
-          console.log(
-            "Old image not found or could not be deleted:",
-            error.message
-          );
-        }
-      }
-
-      // Prefer storing public url only; avoid mixing types on image field
-      delete ambulanceData.image; // ensure no object/string mix
-      ambulanceData.imageUrl = `/uploads/ambulances/${req.file.filename}`;
+    if (req.file && req.file.buffer) {
+      ambulanceData.image = {
+        data: req.file.buffer,
+        contentType: req.file.mimetype,
+      };
+      ambulanceData.imageUrl = undefined;
     }
 
     Object.assign(ambulance, ambulanceData);
@@ -304,31 +245,7 @@ router.delete("/:id", adminAuth, async (req, res) => {
       });
     }
 
-    // Delete image if it exists
-    {
-      const existingPath =
-        typeof ambulance.imageUrl === "string" && ambulance.imageUrl
-          ? ambulance.imageUrl
-          : typeof ambulance.image === "string"
-          ? ambulance.image
-          : ambulance.image?.data || "";
-      if (
-        existingPath &&
-        typeof existingPath === "string" &&
-        existingPath.startsWith("/uploads/")
-      ) {
-        const imagePath = path.join(
-          __dirname,
-          "..",
-          existingPath.replace("/uploads/", "uploads/")
-        );
-        try {
-          await fs.unlink(imagePath);
-        } catch (err) {
-          console.log("Image file not found or already deleted");
-        }
-      }
-    }
+    // No filesystem cleanup needed; images stored in DB
 
     await ambulance.deleteOne();
 

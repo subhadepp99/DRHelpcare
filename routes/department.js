@@ -1,51 +1,15 @@
 const express = require("express");
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs").promises;
 const Department = require("../models/Department");
 const Doctor = require("../models/Doctor");
 const { auth, adminAuth, superuserAuth } = require("../middleware/auth");
 
 const router = express.Router();
 
-// Configure multer for image uploads
-const storage = multer.diskStorage({
-  destination: async (req, file, cb) => {
-    const uploadPath = path.join(__dirname, "..", "uploads", "departments");
-    try {
-      await fs.mkdir(uploadPath, { recursive: true });
-      cb(null, uploadPath);
-    } catch (error) {
-      cb(error, null);
-    }
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(
-      null,
-      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname)
-    );
-  },
-});
-
+// Configure multer for image uploads to memory
 const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-  },
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif/;
-    const extname = allowedTypes.test(
-      path.extname(file.originalname).toLowerCase()
-    );
-    const mimetype = allowedTypes.test(file.mimetype);
-
-    if (mimetype && extname) {
-      return cb(null, true);
-    } else {
-      cb(new Error("Only image files are allowed!"), false);
-    }
-  },
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
 });
 
 // Get all departments (public route for homepage)
@@ -198,11 +162,14 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       name: req.body.name.charAt(0).toUpperCase() + req.body.name.slice(1),
     };
 
-    // Add image path if uploaded
-    if (req.file) {
-      departmentData.imageUrl = `/uploads/departments/${req.file.filename}`;
+    // Store image in DB if uploaded
+    if (req.file && req.file.buffer) {
+      departmentData.image = {
+        data: req.file.buffer.toString("base64"),
+        contentType: req.file.mimetype,
+      };
+      departmentData.imageUrl = undefined;
     } else if (req.body.imageUrl) {
-      // If no file uploaded but imageUrl provided in body
       departmentData.imageUrl = req.body.imageUrl;
     }
 
@@ -252,23 +219,13 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
     }
 
     // Handle image update
-    if (req.file) {
-      // Delete old image if exists
-      if (department.imageUrl && department.imageUrl.startsWith("/uploads/")) {
-        const oldImagePath = path.join(
-          __dirname,
-          "..",
-          department.imageUrl.replace("/uploads/", "uploads/")
-        );
-        try {
-          await fs.unlink(oldImagePath);
-        } catch (error) {
-          console.error("Failed to delete old image:", error);
-        }
-      }
-      updateData.imageUrl = `/uploads/departments/${req.file.filename}`;
+    if (req.file && req.file.buffer) {
+      updateData.image = {
+        data: req.file.buffer.toString("base64"),
+        contentType: req.file.mimetype,
+      };
+      updateData.imageUrl = undefined;
     } else if (req.body.imageUrl) {
-      // If no file uploaded but imageUrl provided in body
       updateData.imageUrl = req.body.imageUrl;
     }
 
