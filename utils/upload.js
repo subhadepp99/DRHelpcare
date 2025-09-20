@@ -96,7 +96,7 @@ const deleteFile = async (filePath) => {
       filePath.replace("/uploads/", "uploads/")
     );
     await fs.unlink(fullPath);
-    console.log("File deleted successfully:", filePath);
+    //console.log("File deleted successfully:", filePath);
   } catch (error) {
     console.error("Failed to delete file:", filePath, error.message);
   }

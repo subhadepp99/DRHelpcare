@@ -92,7 +92,7 @@ router.get("/", async (req, res) => {
             isActive: true,
           });
 
-          console.log("Department search result:", departmentDoc);
+          //console.log("Department search result:", departmentDoc);
 
           if (departmentDoc) {
             baseQuery.department = departmentDoc._id;

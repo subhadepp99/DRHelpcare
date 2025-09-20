@@ -213,6 +213,7 @@ router.post("/send-otp", async (req, res) => {
 
 // Verify booking OTP
 router.post("/verify-otp", async (req, res) => {
+  debugger;
   try {
     const { phone, otp } = req.body;
     if (!phone || !otp) {

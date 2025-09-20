@@ -40,7 +40,16 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["user", "doctor", "clinic", "admin", "superuser", "masteruser"],
+      enum: [
+        "user",
+        "doctor",
+        "clinic",
+        "admin",
+        "superuser",
+        "masteruser",
+        "userDoctor",
+        "userClinic",
+      ],
       default: "user",
     },
     profileImageUrl: {

@@ -141,7 +141,7 @@ const optionalAuth = async (req, res, next) => {
         }
       } catch (error) {
         // Ignore token errors in optional auth
-        console.log("Optional auth token invalid:", error.message);
+        //console.log("Optional auth token invalid:", error.message);
       }
     }
 

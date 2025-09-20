@@ -8,6 +8,7 @@ const {
   validatePassword,
 } = require("../utils/passwordUtils");
 const { generateOTP, sendOTP, verifyOTP } = require("../utils/sms");
+const { verifyAccessToken: verifyMsg91AccessToken } = require("../utils/msg91");
 
 // Generate JWT token
 const generateToken = (userId) => {
@@ -171,7 +172,7 @@ exports.login = async (req, res) => {
     const ident = String(identifier).trim();
 
     // Find user by email, username, or phone
-    const user = await User.findOne({
+    let user = await User.findOne({
       $or: [
         { email: ident.toLowerCase() },
         { username: ident.toLowerCase() },
@@ -181,9 +182,11 @@ exports.login = async (req, res) => {
     });
 
     if (!user) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid credentials" });
+      return res.status(404).json({
+        success: false,
+        message:
+          "This number is not registered with us. Kindly sign up and try again.",
+      });
     }
 
     // Validate password
@@ -193,6 +196,30 @@ exports.login = async (req, res) => {
         .status(401)
         .json({ success: false, message: "Invalid credentials" });
     }
+
+    // Auto-downgrade admin-like login to userDoctor/userClinic if identifier matches doctor/clinic contact
+    try {
+      const Doctor = require("../models/Doctor");
+      const Clinic = require("../models/Clinic");
+      const normalizedIdent = ident.toLowerCase();
+      const byPhone = { phone: ident };
+      const byEmail = { email: normalizedIdent };
+      const isDoctorMatch = await Doctor.findOne({
+        $or: [byPhone, byEmail],
+        isActive: true,
+      }).select("_id");
+      const isClinicMatch = await Clinic.findOne({
+        $or: [byPhone, byEmail],
+        isActive: true,
+      }).select("_id");
+      if (isDoctorMatch && user.role === "user") {
+        user.role = "userDoctor";
+        await user.save();
+      } else if (isClinicMatch && user.role === "user") {
+        user.role = "userClinic";
+        await user.save();
+      }
+    } catch (_) {}
 
     // Update last login
     await user.updateLastLogin();
@@ -296,7 +323,8 @@ exports.getMe = async (req, res) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User not found",
+        message:
+          "This number is not registered with us. Kindly sign up and try again.",
       });
     }
 
@@ -348,7 +376,7 @@ exports.logout = async (req, res) => {
 // Change password
 exports.changePassword = async (req, res) => {
   try {
-    const { currentPassword, newPassword } = req.body;
+    const { currentPassword, newPassword, otp } = req.body;
 
     if (!currentPassword || !newPassword) {
       return res.status(400).json({
@@ -372,6 +400,27 @@ exports.changePassword = async (req, res) => {
       });
     }
 
+    // Require OTP for password change
+    const otpRecord = await OTP.findOne({
+      identifier: user.phone,
+      type: "change_password",
+      isUsed: false,
+      expiresAt: { $gt: new Date() },
+      attempts: { $lt: 3 },
+    });
+
+    if (!otpRecord) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP required. Please request OTP to change password.",
+      });
+    }
+
+    if (!otp || !verifyOTP(otp, otpRecord.otp)) {
+      await otpRecord.incrementAttempts();
+      return res.status(400).json({ success: false, message: "Invalid OTP" });
+    }
+
     // Verify current password
     const isValidPassword = await user.comparePassword(currentPassword);
     if (!isValidPassword) {
@@ -385,6 +434,8 @@ exports.changePassword = async (req, res) => {
     user.password = await hashPassword(newPassword);
     await user.save();
 
+    await otpRecord.markAsUsed();
+
     res.json({
       success: true,
       message: "Password changed successfully",
@@ -396,6 +447,49 @@ exports.changePassword = async (req, res) => {
       message: "Failed to change password",
       error: error.message,
     });
+  }
+};
+
+// Send OTP to change password
+exports.sendChangePasswordOTP = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    if (!user.phone) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone number not set" });
+    }
+
+    const otpCode = generateOTP();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const otp = new OTP({
+      identifier: user.phone,
+      otp: otpCode,
+      type: "change_password",
+      expiresAt,
+    });
+    await otp.save();
+
+    const smsResult = await sendOTP(user.phone, otpCode, "change_password");
+    if (smsResult.success) {
+      return res.json({ success: true, message: "OTP sent successfully" });
+    }
+    return res.json({
+      success: true,
+      message: "OTP sent successfully",
+      warning: "SMS delivery may be delayed",
+    });
+  } catch (error) {
+    console.error("Send change password OTP error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to send OTP" });
   }
 };
 
@@ -511,7 +605,7 @@ exports.verifyOTPAndLogin = async (req, res) => {
     }
 
     // Find user
-    const user = await User.findOne({
+    let user = await User.findOne({
       $or: [
         { email: identifier.toLowerCase() },
         { username: identifier.toLowerCase() },
@@ -527,10 +621,34 @@ exports.verifyOTPAndLogin = async (req, res) => {
       });
     }
 
+    // Auto-assign userDoctor/userClinic role based on identifier
+    try {
+      const Doctor = require("../models/Doctor");
+      const Clinic = require("../models/Clinic");
+      const normalizedIdent = String(identifier).toLowerCase();
+      const byPhone = { phone: identifier };
+      const byEmail = { email: normalizedIdent };
+      const isDoctorMatch = await Doctor.findOne({
+        $or: [byPhone, byEmail],
+        isActive: true,
+      }).select("_id");
+      const isClinicMatch = await Clinic.findOne({
+        $or: [byPhone, byEmail],
+        isActive: true,
+      }).select("_id");
+      if (isDoctorMatch && user.role === "user") {
+        user.role = "userDoctor";
+        await user.save();
+      } else if (isClinicMatch && user.role === "user") {
+        user.role = "userClinic";
+        await user.save();
+      }
+    } catch (_) {}
+
     // Mark OTP as used
     await otpRecord.markAsUsed();
 
-    // Update last login
+    // If MSG91 login, also normalize user role based on identifier match
     await user.updateLastLogin();
 
     // Generate tokens
@@ -562,6 +680,165 @@ exports.verifyOTPAndLogin = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Login failed",
+      error: error.message,
+    });
+  }
+};
+
+// Login using MSG91 (frontend verified). No server-side verify.
+exports.loginWithMsg91 = async (req, res) => {
+  try {
+    const { identifier } = req.body;
+
+    if (!identifier) {
+      return res.status(400).json({
+        success: false,
+        message: "Identifier is required",
+      });
+    }
+
+    // Find user
+    const ident = String(identifier).trim();
+    const user = await User.findOne({
+      $or: [
+        { email: ident.toLowerCase() },
+        { username: ident.toLowerCase() },
+        { phone: ident.replace(/\D/g, "") },
+      ],
+      isActive: true,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "This number is not registered with us. Kindly sign up and try again.",
+      });
+    }
+
+    await user.updateLastLogin();
+    const token = generateToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+
+    await createActivity({
+      type: "user_login_otp",
+      message: `User ${user.username} logged in via MSG91`,
+      user: user._id,
+      targetId: user._id,
+      targetModel: "User",
+      ipAddress: req.ip,
+      userAgent: req.get("User-Agent"),
+    });
+
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
+    return res.json({
+      success: true,
+      message: "Login successful",
+      data: { user: userResponse, token, refreshToken },
+    });
+  } catch (error) {
+    console.error("Login with MSG91 error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Login failed",
+      error: error.message,
+    });
+  }
+};
+
+// Registration: verify MSG91 access token and create user if not exists
+exports.registerWithMsg91 = async (req, res) => {
+  try {
+    const { accessToken, user: userPayload } = req.body;
+
+    if (!accessToken) {
+      return res.status(400).json({
+        success: false,
+        message: "accessToken is required",
+      });
+    }
+
+    const verification = await verifyMsg91AccessToken(accessToken);
+    if (!verification.success) {
+      return res.status(401).json({
+        success: false,
+        message: verification.message || "MSG91 verification failed",
+        error: verification.error,
+      });
+    }
+
+    const data = verification.data || {};
+    const phone = (data.mobile || data.phone || "")
+      .toString()
+      .replace(/\D/g, "");
+    const email = (data.email || userPayload?.email || "")
+      .toString()
+      .toLowerCase();
+
+    if (!phone && !email) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone or email required from MSG91",
+      });
+    }
+
+    let user = await User.findOne({
+      $or: [...(email ? [{ email }] : []), ...(phone ? [{ phone }] : [])],
+    });
+
+    if (!user) {
+      // Create minimal user; rest from payload
+      const usernameBase = (
+        userPayload?.username ||
+        email?.split("@")[0] ||
+        phone
+      ).toLowerCase();
+      const username = usernameBase;
+      const firstName = userPayload?.firstName || "";
+      const lastName = userPayload?.lastName || "";
+      const passwordHash = await hashPassword(
+        userPayload?.password || Math.random().toString(36).slice(2) + "A1!"
+      );
+
+      user = new User({
+        username,
+        email: email || undefined,
+        password: passwordHash,
+        firstName,
+        lastName,
+        phone: phone || undefined,
+        role: "user",
+      });
+      await user.save();
+      await createActivity({
+        type: "user_registered",
+        message: `New user registration via MSG91: ${username}`,
+        user: user._id,
+        targetId: user._id,
+        targetModel: "User",
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent"),
+      });
+    }
+
+    const token = generateToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
+    return res.status(201).json({
+      success: true,
+      message: "Registration successful",
+      data: { user: userResponse, token, refreshToken },
+    });
+  } catch (error) {
+    console.error("Register with MSG91 error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Registration failed",
       error: error.message,
     });
   }
@@ -826,7 +1103,7 @@ exports.forgotPassword = async (req, res) => {
 
     // In production, implement actual email sending here
     if (user) {
-      console.log(`Password reset requested for user: ${user.email}`);
+      //console.log(`Password reset requested for user: ${user.email}`);
       // Generate reset token and send email
     }
   } catch (error) {

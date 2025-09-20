@@ -114,7 +114,7 @@ router.get("/search", async (req, res) => {
   try {
     const { name = "", location = "" } = req.query;
 
-    console.log("Clinic search request:", { name, location });
+    //console.log("Clinic search request:", { name, location });
 
     const query = { isActive: true };
 
@@ -133,13 +133,13 @@ router.get("/search", async (req, res) => {
       ];
     }
 
-    console.log("Search query:", JSON.stringify(query, null, 2));
+    //console.log("Search query:", JSON.stringify(query, null, 2));
 
     // First, let's see what clinics exist in the database
     const allClinics = await Clinic.find({ isActive: true }).select(
       "name place state address"
     );
-    console.log("All active clinics in database:", allClinics);
+    //console.log("All active clinics in database:", allClinics);
 
     const clinics = await Clinic.find(query)
       .select(
@@ -147,20 +147,20 @@ router.get("/search", async (req, res) => {
       )
       .limit(20);
 
-    console.log(`Found ${clinics.length} clinics matching the search`);
-    console.log(
-      "Matching clinics:",
-      clinics.map((c) => ({
-        id: c._id,
-        name: c.name,
-        place: c.place,
-        state: c.state,
-        address: c.address,
-        type: c.type,
-        phone: c.phone,
-        email: c.email,
-      }))
-    );
+    //console.log(`Found ${clinics.length} clinics matching the search`);
+    //console.log(
+    // "Matching clinics:",
+    // clinics.map((c) => ({
+    //   id: c._id,
+    //   name: c.name,
+    //   place: c.place,
+    //   state: c.state,
+    //   address: c.address,
+    //   type: c.type,
+    //   phone: c.phone,
+    //   email: c.email,
+    // }))
+    // );
 
     // Convert database images to base64 for frontend
     const clinicsWithImages = clinics.map((clinic) => {
@@ -195,7 +195,7 @@ router.get("/by-id/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    console.log("Get clinic by ID request:", { id });
+    //console.log("Get clinic by ID request:", { id });
 
     const clinic = await Clinic.findById(id)
       .select("-reviews -__v")
@@ -216,7 +216,7 @@ router.get("/by-id/:id", async (req, res) => {
       };base64,${clinicObj.image.data.toString("base64")}`;
     }
 
-    console.log("Found clinic:", { id: clinic._id, name: clinic.name });
+    //console.log("Found clinic:", { id: clinic._id, name: clinic.name });
 
     res.json({
       success: true,

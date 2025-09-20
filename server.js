@@ -21,14 +21,14 @@ mongoose.connection.once("open", async () => {
     const hasLicenseIdx = indexes.some((i) => i.name === "licenseNumber_1");
     if (hasLicenseIdx) {
       await collection.dropIndex("licenseNumber_1");
-      console.log("Dropped obsolete index licenseNumber_1 on pathologies");
+      // //console.log("Dropped obsolete index licenseNumber_1 on pathologies");
     }
     // Ensure email index is partial unique (only enforce when email is a string)
     const emailIdx = indexes.find((i) => i.name === "email_1");
     if (emailIdx) {
       // Drop and recreate as partial unique to avoid dup null errors
       await collection.dropIndex("email_1");
-      console.log("Dropped existing email_1 index on pathologies");
+      // //console.log("Dropped existing email_1 index on pathologies");
     }
     await collection.createIndex(
       { email: 1 },
@@ -38,7 +38,7 @@ mongoose.connection.once("open", async () => {
         partialFilterExpression: { email: { $type: "string" } },
       }
     );
-    console.log("Created partial unique index email_1 on pathologies");
+    //console.log("Created partial unique index email_1 on pathologies");
   } catch (e) {
     console.warn("Index cleanup skipped:", e.message);
   }
@@ -134,5 +134,5 @@ app.use("*", (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  //console.log(`Server running on port ${PORT}`);
 }); // Export the app for testing or further configuration

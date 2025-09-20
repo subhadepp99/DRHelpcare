@@ -43,10 +43,19 @@ router.post("/logout", auth, authController.logout);
 
 // Change password
 router.put("/change-password", auth, authController.changePassword);
+router.post(
+  "/send-change-password-otp",
+  auth,
+  authController.sendChangePasswordOTP
+);
 
 // OTP-based authentication
 router.post("/send-login-otp", authLimiter, authController.sendLoginOTP);
 router.post("/verify-otp-login", authLimiter, authController.verifyOTPAndLogin);
+
+// MSG91 Widget access-token flows
+router.post("/login-msg91", authLimiter, authController.loginWithMsg91);
+router.post("/register-msg91", authLimiter, authController.registerWithMsg91);
 
 // Registration OTP
 router.post(
@@ -67,46 +76,7 @@ router.post(
   authController.resetPasswordWithOTP
 );
 
-// Test SMS endpoint (for development only)
-router.post("/test-sms", authLimiter, async (req, res) => {
-  try {
-    const { phoneNumber, messageType = "login" } = req.body;
-
-    if (!phoneNumber) {
-      return res.status(400).json({
-        success: false,
-        message: "Phone number is required",
-      });
-    }
-
-    const { generateOTP, sendOTP } = require("../utils/sms");
-    const otp = generateOTP();
-
-    const result = await sendOTP(phoneNumber, otp, messageType);
-
-    if (result.success) {
-      res.json({
-        success: true,
-        message: "Test SMS sent successfully",
-        otp: otp, // Only for testing - remove in production
-        result: result,
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        message: "Failed to send test SMS",
-        error: result.error,
-      });
-    }
-  } catch (error) {
-    console.error("Test SMS error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Test SMS failed",
-      error: error.message,
-    });
-  }
-});
+// Removed test SMS endpoint in production
 
 // Forgot password (basic implementation)
 router.post("/forgot-password", authLimiter, authController.forgotPassword);

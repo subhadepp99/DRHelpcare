@@ -4,16 +4,15 @@ const axios = require("axios");
 const FAST2SMS_API_KEY = process.env.FAST2SMS_API_KEY;
 const FAST2SMS_SENDER_ID = process.env.FAST2SMS_SENDER_ID || "DRHELP";
 
-// Generate a random 6-digit OTP
+// Generate a random 4-digit OTP (legacy fallback when MSG91 Widget is unavailable)
 const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return Math.floor(1000 + Math.random() * 9000).toString();
 };
 
 // Send OTP via SMS using Fast2SMS
 const sendOTP = async (phoneNumber, otp, messageType = "login") => {
   try {
     if (!FAST2SMS_API_KEY) {
-      console.warn("Fast2SMS API key not configured. Skipping SMS send.");
       return { success: false, message: "SMS service not configured" };
     }
 
@@ -69,9 +68,9 @@ const sendOTP = async (phoneNumber, otp, messageType = "login") => {
     );
 
     if (response.data && response.data.return === true) {
-      console.log(
-        `SMS sent successfully to ${phoneNumber}. Request ID: ${response.data.request_id}`
-      );
+      //console.log(
+      // `SMS sent successfully to ${phoneNumber}. Request ID: ${response.data.request_id}`
+      // );
       return {
         success: true,
         message: "SMS sent successfully",

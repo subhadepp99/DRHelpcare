@@ -180,9 +180,9 @@ exports.getProfile = async (req, res) => {
 exports.updateUser = async (req, res) => {
   try {
     const userId = req.params.id;
-    console.log("Update user called with ID:", userId);
-    console.log("Request params:", req.params);
-    console.log("Request user:", req.user);
+    //console.log("Update user called with ID:", userId);
+    //console.log("Request params:", req.params);
+    //console.log("Request user:", req.user);
 
     const updates = { ...req.body };
 
