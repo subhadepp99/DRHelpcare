@@ -13,18 +13,8 @@ if (!fs.existsSync(userUploadsDir)) {
   fs.mkdirSync(userUploadsDir, { recursive: true });
 }
 
-// Storage configuration for user profile images
-const userStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, userUploadsDir);
-  },
-  filename: (req, file, cb) => {
-    // Generate unique filename with timestamp
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
-    cb(null, `profile-${uniqueSuffix}${ext}`);
-  },
-});
+// Use memory storage for all images, including user profile images
+const userStorage = multer.memoryStorage();
 
 // Keep memory storage for other uses (like doctor images)
 const memoryStorage = multer.memoryStorage();

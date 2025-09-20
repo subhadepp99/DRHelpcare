@@ -10,6 +10,21 @@ const {
   validatePassword,
 } = require("../utils/passwordUtils");
 
+// Helper: build data URL from stored image
+function buildDataUrl(image) {
+  try {
+    if (!image || !image.data || !image.contentType) return null;
+    const base64 = Buffer.isBuffer(image.data)
+      ? image.data.toString("base64")
+      : typeof image.data === "string"
+      ? image.data
+      : Buffer.from(image.data.data || []).toString("base64");
+    return `data:${image.contentType};base64,${base64}`;
+  } catch (_) {
+    return null;
+  }
+}
+
 exports.createUser = async (req, res) => {
   try {
     if (!["admin", "superuser"].includes(req.user.role)) {
@@ -48,10 +63,13 @@ exports.createUser = async (req, res) => {
       role: role || "user",
     };
 
-    // Add profile image if uploaded
-    if (req.file) {
-      // Store relative URL; frontend will prepend base
-      userData.profileImageUrl = `/uploads/users/${req.file.filename}`;
+    // Add profile image if uploaded (store in DB)
+    if (req.file && req.file.buffer) {
+      userData.profileImage = {
+        data: req.file.buffer,
+        contentType: req.file.mimetype,
+      };
+      userData.profileImageUrl = undefined;
     }
 
     const user = new User(userData);
@@ -68,6 +86,10 @@ exports.createUser = async (req, res) => {
 
     // Remove password from response
     const userResponse = user.toObject();
+    if (userResponse.profileImage) {
+      const url = buildDataUrl(userResponse.profileImage);
+      if (url) userResponse.profileImageUrl = url;
+    }
     delete userResponse.password;
 
     res.status(201).json({
@@ -125,6 +147,12 @@ exports.getAllUsers = async (req, res) => {
 
     const usersWithImage = users.map((user) => {
       const userObj = user.toObject();
+      if (userObj.profileImage) {
+        const url = buildDataUrl(userObj.profileImage);
+        if (url && url.length > "data:image/".length)
+          userObj.profileImageUrl = url;
+      }
+      delete userObj.profileImage;
       return userObj;
     });
 
@@ -162,6 +190,12 @@ exports.getProfile = async (req, res) => {
     }
 
     const userObj = user.toObject();
+    if (userObj.profileImage) {
+      const url = buildDataUrl(userObj.profileImage);
+      if (url && url.length > "data:image/".length)
+        userObj.profileImageUrl = url;
+    }
+    delete userObj.profileImage;
 
     res.json({
       success: true,
@@ -204,31 +238,12 @@ exports.updateUser = async (req, res) => {
       });
     }
 
-    if (req.file) {
-      // Store relative URL; frontend will prepend base
-      updates.profileImageUrl = `/uploads/users/${req.file.filename}`;
-
-      // Remove the old profile image if it exists
-      if (user.profileImageUrl) {
-        try {
-          const urlOrPath = user.profileImageUrl;
-          let relativePath = urlOrPath;
-          if (/^https?:\/\//i.test(urlOrPath)) {
-            const u = new URL(urlOrPath);
-            relativePath = u.pathname;
-          }
-          const fullOldPath = path.join(
-            __dirname,
-            "..",
-            relativePath.replace(/^\//, "")
-          );
-          if (fs.existsSync(fullOldPath)) {
-            fs.unlinkSync(fullOldPath);
-          }
-        } catch (error) {
-          console.error("Error deleting old profile image:", error);
-        }
-      }
+    if (req.file && req.file.buffer) {
+      updates.profileImage = {
+        data: req.file.buffer,
+        contentType: req.file.mimetype,
+      };
+      updates.profileImageUrl = undefined;
     } else if (updates.profileImage === null) {
       // If profileImage is explicitly set to null, remove the image
       updates.$unset = { profileImage: 1, profileImageUrl: 1 };
@@ -241,7 +256,9 @@ exports.updateUser = async (req, res) => {
     const updatedUser = await User.findByIdAndUpdate(userId, updates, {
       new: true,
       runValidators: true,
-    }).select("-password -__v");
+    })
+      .select("-password -__v")
+      .lean();
 
     await createActivity({
       type: "user_updated",
@@ -251,12 +268,20 @@ exports.updateUser = async (req, res) => {
       targetModel: "User",
     });
 
-    const updatedUserObj = updatedUser.toObject();
+    if (updatedUser && updatedUser.profileImage) {
+      const url = buildDataUrl(updatedUser.profileImage);
+      if (url && url.length > "data:image/".length) {
+        updatedUser.profileImageUrl = url;
+      } else {
+        // Remove empty or invalid profileImageUrl so client uses profileImage fallback
+        delete updatedUser.profileImageUrl;
+      }
+    }
 
     res.json({
       success: true,
       message: "Profile updated successfully",
-      data: updatedUserObj,
+      data: updatedUser,
     });
   } catch (error) {
     console.error("Update user error:", error);

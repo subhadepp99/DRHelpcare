@@ -165,7 +165,7 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
     // Store image in DB if uploaded
     if (req.file && req.file.buffer) {
       departmentData.image = {
-        data: req.file.buffer.toString("base64"),
+        data: req.file.buffer, // store raw bytes in Buffer
         contentType: req.file.mimetype,
       };
       departmentData.imageUrl = undefined;
@@ -221,7 +221,7 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
     // Handle image update
     if (req.file && req.file.buffer) {
       updateData.image = {
-        data: req.file.buffer.toString("base64"),
+        data: req.file.buffer, // store raw bytes in Buffer
         contentType: req.file.mimetype,
       };
       updateData.imageUrl = undefined;

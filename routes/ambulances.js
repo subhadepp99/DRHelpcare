@@ -296,7 +296,9 @@ router.get("/search/public", async (req, res) => {
     }
 
     const ambulances = await Ambulance.find(query)
-      .select("name place state baseRate perKmRate is24Hours imageUrl")
+      .select(
+        "name place state baseRate perKmRate is24Hours image contentType imageUrl"
+      )
       .sort({ createdAt: -1 })
       .limit(50);
 

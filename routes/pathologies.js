@@ -300,13 +300,13 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       }
     }
 
-    //console.log(
+    console.log(
       "Final pathology data before update:",
       JSON.stringify(pathologyData, null, 2)
     );
 
     // Log the existing pathology data for comparison
-    //console.log(
+    console.log(
       "Existing pathology data:",
       JSON.stringify(
         {

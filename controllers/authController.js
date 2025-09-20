@@ -10,6 +10,20 @@ const {
 const { generateOTP, sendOTP, verifyOTP } = require("../utils/sms");
 const { verifyAccessToken: verifyMsg91AccessToken } = require("../utils/msg91");
 
+function buildDataUrl(image) {
+  try {
+    if (!image || !image.data || !image.contentType) return null;
+    const base64 = Buffer.isBuffer(image.data)
+      ? image.data.toString("base64")
+      : typeof image.data === "string"
+      ? image.data
+      : Buffer.from(image.data.data || []).toString("base64");
+    return `data:${image.contentType};base64,${base64}`;
+  } catch (_) {
+    return null;
+  }
+}
+
 // Generate JWT token
 const generateToken = (userId) => {
   return jwt.sign(
@@ -114,6 +128,12 @@ exports.register = async (req, res) => {
 
     // Remove password from response
     const userResponse = user.toObject();
+    if (userResponse.profileImage) {
+      const url = buildDataUrl(userResponse.profileImage);
+      if (url && url.length > "data:image/".length)
+        userResponse.profileImageUrl = url;
+      else delete userResponse.profileImageUrl;
+    }
     delete userResponse.password;
 
     res.status(201).json({
@@ -244,6 +264,10 @@ exports.login = async (req, res) => {
 
     // Prepare response user
     const userResponse = user.toObject();
+    if (userResponse.profileImage) {
+      const url = buildDataUrl(userResponse.profileImage);
+      if (url) userResponse.profileImageUrl = url;
+    }
     delete userResponse.password;
 
     return res.json({
@@ -668,6 +692,10 @@ exports.verifyOTPAndLogin = async (req, res) => {
 
     // Prepare response user
     const userResponse = user.toObject();
+    if (userResponse.profileImage) {
+      const url = buildDataUrl(userResponse.profileImage);
+      if (url) userResponse.profileImageUrl = url;
+    }
     delete userResponse.password;
 
     res.json({
@@ -731,6 +759,12 @@ exports.loginWithMsg91 = async (req, res) => {
     });
 
     const userResponse = user.toObject();
+    if (userResponse.profileImage) {
+      const url = buildDataUrl(userResponse.profileImage);
+      if (url && url.length > "data:image/".length)
+        userResponse.profileImageUrl = url;
+      else delete userResponse.profileImageUrl;
+    }
     delete userResponse.password;
 
     return res.json({
