@@ -218,20 +218,23 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       });
     }
 
-    // Handle image update
+    // Build atomic update with proper unsets so UI reflects latest image source
+    const updateOps = { $set: updateData };
     if (req.file && req.file.buffer) {
-      updateData.image = {
+      updateOps.$set.image = {
         data: req.file.buffer, // store raw bytes in Buffer
         contentType: req.file.mimetype,
       };
-      updateData.imageUrl = undefined;
+      updateOps.$unset = { ...(updateOps.$unset || {}), imageUrl: "" };
     } else if (req.body.imageUrl) {
-      updateData.imageUrl = req.body.imageUrl;
+      // Switching to external image URL: persist URL and remove inline image buffer
+      updateOps.$set.imageUrl = req.body.imageUrl;
+      updateOps.$unset = { ...(updateOps.$unset || {}), image: "" };
     }
 
     const updatedDepartment = await Department.findByIdAndUpdate(
       req.params.id,
-      updateData,
+      updateOps,
       { new: true, runValidators: true }
     );
 

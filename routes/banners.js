@@ -1,5 +1,7 @@
 const express = require("express");
 const multer = require("multer");
+const fs = require("fs/promises");
+const mongoose = require("mongoose");
 const { adminAuth } = require("../middleware/auth");
 const Banner = require("../models/Banner");
 
@@ -126,17 +128,29 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
 // Admin: delete banner
 router.delete("/:id", adminAuth, async (req, res) => {
   try {
-    const { id } = req.params;
-    const banner = await Banner.findById(id);
-    if (!banner)
+    const idRaw = req.params.id;
+    const id = typeof idRaw === "string" ? idRaw.trim() : idRaw;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid banner id" });
+    }
+    const deleted = await Banner.findByIdAndDelete(id);
+    if (!deleted) {
       return res
         .status(404)
         .json({ success: false, message: "Banner not found" });
-
-    await banner.deleteOne();
-    res.json({ success: true, message: "Banner deleted" });
+    }
+    return res.json({ success: true, message: "Banner deleted" });
   } catch (error) {
-    res.status(500).json({
+    if (error?.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid banner id",
+      });
+    }
+    console.error("Delete banner error:", error);
+    return res.status(500).json({
       success: false,
       message: "Failed to delete banner",
       error: error.message,

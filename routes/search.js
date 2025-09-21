@@ -572,25 +572,18 @@ router.get("/suggestions", async (req, res) => {
       return res.json({ suggestions });
     }
 
+    // Doctors
     if (type === "all" || type === "doctors") {
-      let query = { isActive: true };
-      if (q.length >= 3) {
-        // Full search for 3+ characters
-        query = {
-          $or: [{ name: regex }, { specialization: regex }],
-          isActive: true,
-        };
-      } else {
-        // Basic search for 1-2 characters - just check if name starts with query
-        query = {
-          name: { $regex: `^${q}`, $options: "i" },
-          isActive: true,
-        };
-      }
-
-      const doctors = await Doctor.find(query)
+      const doctors = await Doctor.find(
+        hasQuery
+          ? {
+              isActive: true,
+              $or: [{ name: regex }, { specialization: regex }],
+            }
+          : { isActive: true }
+      )
         .select("name specialization")
-        .limit(q.length >= 3 ? 5 : 3);
+        .limit(10);
 
       doctors.forEach((doctor) => {
         suggestions.push({
@@ -601,65 +594,115 @@ router.get("/suggestions", async (req, res) => {
         });
       });
     }
-    if (type === "all" || type === "clinics") {
-      let query = { isActive: true };
-      if (q.length >= 3) {
-        // Full search for 3+ characters
-        query = {
-          name: regex,
-          isActive: true,
-        };
-      } else {
-        // Basic search for 1-2 characters - just check if name starts with query
-        query = {
-          name: { $regex: `^${q}`, $options: "i" },
-          isActive: true,
-        };
-      }
 
-      const clinics = await Clinic.find(query)
-        .select("name address.city")
-        .limit(q.length >= 3 ? 3 : 2);
+    // Clinics
+    if (type === "all" || type === "clinics") {
+      const clinics = await Clinic.find(
+        hasQuery ? { isActive: true, name: regex } : { isActive: true }
+      )
+        .select("name address.city place state")
+        .limit(10);
 
       clinics.forEach((clinic) => {
         suggestions.push({
           type: "clinic",
           text: clinic.name,
-          subtext: clinic.address.city,
+          subtext:
+            clinic.address?.city || clinic.place || clinic.state || "Clinic",
           id: clinic._id,
         });
       });
     }
-    if (type === "all" || type === "ambulance") {
-      let query = { isActive: true };
-      if (q.length >= 3) {
-        // Full search for 3+ characters
-        query = {
-          $or: [{ name: regex }, { city: regex }],
-          isActive: true,
-        };
-      } else {
-        // Basic search for 1-2 characters - just check if name starts with query
-        query = {
-          name: { $regex: `^${q}`, $options: "i" },
-          isActive: true,
-        };
-      }
 
-      const ambulances = await Ambulance.find(query)
-        .select("name city")
-        .limit(q.length >= 3 ? 3 : 2);
+    // Departments
+    if (type === "all" || type === "departments") {
+      const depts = await Department.find(
+        hasQuery
+          ? {
+              isActive: true,
+              $or: [
+                { name: regex },
+                { heading: regex },
+                { specialization: regex },
+              ],
+            }
+          : { isActive: true }
+      )
+        .select("name heading specialization")
+        .limit(10);
+
+      depts.forEach((d) => {
+        suggestions.push({
+          type: "department",
+          text: d.heading || d.name,
+          subtext: d.specialization || "Department",
+          id: d._id,
+        });
+      });
+    }
+
+    // Pathologies
+    if (type === "all" || type === "pathology") {
+      const paths = await Pathology.find(
+        hasQuery
+          ? { isActive: true, $or: [{ name: regex }, { category: regex }] }
+          : { isActive: true }
+      )
+        .select("name category place state")
+        .limit(10);
+
+      paths.forEach((p) => {
+        suggestions.push({
+          type: "pathology",
+          text: p.name,
+          subtext: p.category || p.place || p.state || "Pathology",
+          id: p._id,
+        });
+      });
+    }
+
+    // Pharmacies
+    if (type === "all" || type === "pharmacies") {
+      const pharms = await Pharmacy.find(
+        hasQuery ? { isActive: true, name: regex } : { isActive: true }
+      )
+        .select("name address.city state")
+        .limit(10);
+
+      pharms.forEach((ph) => {
+        suggestions.push({
+          type: "pharmacy",
+          text: ph.name,
+          subtext: ph.address?.city || ph.state || "Pharmacy",
+          id: ph._id,
+        });
+      });
+    }
+
+    // Ambulances
+    if (type === "all" || type === "ambulance") {
+      const ambulances = await Ambulance.find(
+        hasQuery
+          ? {
+              isActive: true,
+              $or: [{ name: regex }, { city: regex }, { state: regex }],
+            }
+          : { isActive: true }
+      )
+        .select("name city state")
+        .limit(10);
 
       ambulances.forEach((ambulance) => {
         suggestions.push({
           type: "ambulance",
           text: ambulance.name,
-          subtext: ambulance.city,
+          subtext: ambulance.city || ambulance.state || "Ambulance",
           id: ambulance._id,
         });
       });
     }
-    res.json({ suggestions: suggestions.slice(0, 10) });
+
+    res.json({ suggestions: suggestions.slice(0, 15) });
   } catch (error) {
     res.status(500).json({
       success: false,
