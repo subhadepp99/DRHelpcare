@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-const pathologySchema = new mongoose.Schema(
+const testSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     testCode: { type: String, trim: true },
@@ -8,22 +8,13 @@ const pathologySchema = new mongoose.Schema(
     sampleType: { type: String, required: true, trim: true },
     description: { type: String, trim: true },
     price: { type: Number, required: true, min: 0 },
+    discountedPrice: { type: Number, min: 0 },
     turnaroundTime: { type: String, default: "24 hours", trim: true },
-    preparation: { type: String, trim: true },
-    email: { type: String, trim: true, lowercase: true },
-    phone: { type: String, trim: true },
-    isPackage: { type: Boolean, default: false },
+    preparationInstructions: { type: String, trim: true },
+    reportTime: { type: String, default: "24 hours", trim: true },
     isActive: { type: Boolean, default: true },
     image: { data: Buffer, contentType: String },
     imageUrl: { type: String, trim: true },
-    // For packages, reference individual tests
-    tests: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Test",
-      },
-    ],
-    // Legacy components field for backward compatibility
     components: [
       {
         name: { type: String, required: true },
@@ -40,23 +31,21 @@ const pathologySchema = new mongoose.Schema(
         end: { type: String, default: "" },
       },
     },
+    // Reference to pathology lab
+    pathologyLab: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Pathology",
+      required: true,
+    },
+    // Location information
     address: { type: String, required: true, trim: true },
     place: { type: String, required: true, trim: true },
     state: { type: String, required: true, trim: true },
     zipCode: { type: String, required: true, trim: true },
     country: { type: String, default: "India", trim: true },
-    rating: {
-      average: { type: Number, default: 0, min: 0, max: 5 },
-      count: { type: Number, default: 0 },
-    },
-    reviews: [
-      {
-        patient: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-        rating: { type: Number, required: true, min: 1, max: 5 },
-        comment: String,
-        date: { type: Date, default: Date.now },
-      },
-    ],
+    // Contact information
+    email: { type: String, trim: true, lowercase: true },
+    phone: { type: String, trim: true },
   },
   {
     timestamps: true,
@@ -64,18 +53,16 @@ const pathologySchema = new mongoose.Schema(
 );
 
 // Text index for search
-pathologySchema.index({
+testSchema.index({
   name: "text",
   description: "text",
   category: "text",
-  address: "text",
-  place: "text",
-  state: "text",
+  sampleType: "text",
 });
 
 // Index for efficient queries
-pathologySchema.index({ isPackage: 1 });
-pathologySchema.index({ isActive: 1 });
-pathologySchema.index({ category: 1 });
+testSchema.index({ pathologyLab: 1 });
+testSchema.index({ category: 1 });
+testSchema.index({ isActive: 1 });
 
-module.exports = mongoose.model("Pathology", pathologySchema);
+module.exports = mongoose.model("Test", testSchema);

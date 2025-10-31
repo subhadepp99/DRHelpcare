@@ -16,12 +16,9 @@ exports.createClinic = async (req, res) => {
   } catch (error) {
     console.error(error);
     if (error.code === 11000) {
-      return res
-        .status(400)
-        .json({
-          message:
-            "Clinic with this email or registration number already exists",
-        });
+      return res.status(400).json({
+        message: "Clinic with this email or registration number already exists",
+      });
     }
     res.status(500).json({ message: "Error creating clinic" });
   }
@@ -30,6 +27,7 @@ exports.createClinic = async (req, res) => {
 exports.getAllClinics = async (req, res) => {
   try {
     const { page = 1, limit = 10, city, state } = req.query;
+    const Review = require("../models/Review");
 
     let query = { isActive: true };
 
@@ -49,8 +47,42 @@ exports.getAllClinics = async (req, res) => {
 
     const total = await Clinic.countDocuments(query);
 
+    // Add review stats to each clinic
+    const clinicsWithStats = await Promise.all(
+      clinics.map(async (clinic) => {
+        const reviewStats = await Review.aggregate([
+          {
+            $match: {
+              entityType: "Clinic",
+              entityId: clinic._id,
+              isApproved: true,
+              isActive: true,
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              averageRating: { $avg: "$rating" },
+              totalReviews: { $sum: 1 },
+            },
+          },
+        ]);
+
+        const stats = reviewStats[0] || {
+          averageRating: 0,
+          totalReviews: 0,
+        };
+
+        return {
+          ...clinic.toObject(),
+          rating: Math.round(stats.averageRating * 10) / 10,
+          reviewCount: stats.totalReviews,
+        };
+      })
+    );
+
     res.json({
-      clinics,
+      clinics: clinicsWithStats,
       totalPages: Math.ceil(total / limit),
       currentPage: page,
       total,

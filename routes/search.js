@@ -23,6 +23,70 @@ function matchesText(doc, q, fields) {
   );
 }
 
+// Helper function to calculate distance between two points (Haversine formula)
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth's radius in km
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const distance = R * c;
+  return distance; // Distance in km
+}
+
+// Helper function to add distance to results
+function addDistanceToResults(results, userLat, userLng) {
+  return results.map((item) => {
+    let coordinates = null;
+
+    // Extract coordinates based on entity type
+    // Doctor: address.location.coordinates
+    if (item.address?.location?.coordinates) {
+      coordinates = item.address.location.coordinates;
+    }
+    // Clinic, Ambulance: coordinates
+    else if (item.coordinates) {
+      coordinates = item.coordinates;
+    }
+    // Pathology: may have coordinates field
+    else if (item.location?.coordinates) {
+      coordinates = item.location.coordinates;
+    }
+
+    if (coordinates && coordinates.length === 2 && userLat && userLng) {
+      const [itemLng, itemLat] = coordinates;
+      if (itemLat && itemLng && itemLat !== 0 && itemLng !== 0) {
+        const distance = calculateDistance(
+          parseFloat(userLat),
+          parseFloat(userLng),
+          itemLat,
+          itemLng
+        );
+        return {
+          ...(item.toObject ? item.toObject() : item),
+          distance: parseFloat(distance.toFixed(2)),
+        };
+      }
+    }
+
+    return { ...(item.toObject ? item.toObject() : item), distance: null };
+  });
+}
+
+// Helper function to sort results by distance
+function sortByDistance(results) {
+  return results.sort((a, b) => {
+    if (a.distance === null) return 1;
+    if (b.distance === null) return -1;
+    return a.distance - b.distance;
+  });
+}
+
 router.get("/", async (req, res) => {
   try {
     const {
@@ -36,7 +100,7 @@ router.get("/", async (req, res) => {
       experience,
       fee,
       rating,
-      distance = 25,
+      distance = 50,
       limit = 20,
       page = 1,
     } = req.query;
@@ -47,31 +111,16 @@ router.get("/", async (req, res) => {
     const skip = (page - 1) * limit;
     const results = {};
     const lim = parseInt(limit);
-
-    // Build filters
-    let geoFilter = {};
-    if (lat && lng) {
-      geoFilter = {
-        "address.coordinates": {
-          $near: {
-            $geometry: {
-              type: "Point",
-              coordinates: [parseFloat(lng), parseFloat(lat)],
-            },
-            $maxDistance: distance * 1000,
-          },
-        },
-      };
-    } else if (city) {
-      geoFilter = { "address.city": new RegExp(city, "i") };
-    }
+    const userLat = lat ? parseFloat(lat) : null;
+    const userLng = lng ? parseFloat(lng) : null;
+    const maxDistance = parseInt(distance) * 1000; // Convert km to meters
 
     // Substring location matcher used across entities
     const locationRegex = city ? new RegExp(city, "i") : null;
 
     // --- DOCTORS ---
     if (type === "all" || type === "doctors") {
-      let baseQuery = { ...geoFilter, isActive: true };
+      let baseQuery = { isActive: true };
       if (specialization) baseQuery.specialization = specialization;
 
       // Handle department filtering
@@ -146,31 +195,21 @@ router.get("/", async (req, res) => {
       );
 
       let doctors;
-      if (q && lat && lng) {
-        // Geo first, then manual text search
-        const doctorLocationFilter = locationRegex
-          ? {
-              $or: [
-                { "address.city": locationRegex },
-                { "address.state": locationRegex },
-                { city: locationRegex },
-                { state: locationRegex },
-              ],
-            }
-          : {};
 
-        doctors = await Doctor.find({ ...baseQuery, ...doctorLocationFilter })
-          .select("-reviews -__v")
-          .populate("department", "name")
-          .populate("clinicDetails.clinic", "name address place state city")
-          .limit(lim * 5) // get extra for manual filtering
-          .lean();
+      // Build location filter
+      const doctorLocationFilter = locationRegex
+        ? {
+            $or: [
+              { "address.city": locationRegex },
+              { "address.state": locationRegex },
+              { city: locationRegex },
+              { state: locationRegex },
+            ],
+          }
+        : {};
 
-        doctors = doctors
-          .filter((d) => matchesText(d, q, ["name", "specialization", "bio"]))
-          .slice(0, lim);
-      } else if (q) {
-        // Case-insensitive substring search including department name/heading matches
+      if (q) {
+        // Text search with location filter
         const regex = new RegExp(q, "i");
 
         // Find matching departments by name/heading/specialization
@@ -189,17 +228,6 @@ router.get("/", async (req, res) => {
           departmentIds = [];
         }
 
-        const doctorLocationFilter = locationRegex
-          ? {
-              $or: [
-                { "address.city": locationRegex },
-                { "address.state": locationRegex },
-                { city: locationRegex },
-                { state: locationRegex },
-              ],
-            }
-          : {};
-
         doctors = await Doctor.find({
           ...baseQuery,
           ...doctorLocationFilter,
@@ -215,48 +243,40 @@ router.get("/", async (req, res) => {
           .select("-reviews -__v")
           .populate("department", "name")
           .populate("clinicDetails.clinic", "name address place state city")
-          .limit(lim)
-          .skip(skip)
-          .sort({ name: 1 });
+          .limit(lim * 3) // Get more results for distance sorting
+          .lean();
       } else {
-        // Just geo or no q
-        const doctorLocationFilter = locationRegex
-          ? {
-              $or: [
-                { "address.city": locationRegex },
-                { "address.state": locationRegex },
-                { city: locationRegex },
-                { state: locationRegex },
-              ],
-            }
-          : {};
-
+        // No text query, just location and filters
         doctors = await Doctor.find({ ...baseQuery, ...doctorLocationFilter })
           .select("-reviews -__v")
           .populate("department", "name")
           .populate("clinicDetails.clinic", "name address place state city")
-          .limit(lim)
-          .skip(skip)
-          .sort({ "rating.average": -1 });
+          .limit(lim * 3) // Get more results for distance sorting
+          .lean();
       }
+
+      // Add distance calculation and sort by distance
+      if (userLat && userLng) {
+        doctors = addDistanceToResults(doctors, userLat, userLng);
+        doctors = sortByDistance(doctors);
+        // Filter by max distance if coordinates are available
+        doctors = doctors.filter(
+          (d) => d.distance === null || d.distance <= parseInt(distance)
+        );
+      }
+
+      // Apply pagination after distance sorting
+      doctors = doctors.slice(skip, skip + lim);
+
       results.doctors = doctors;
     }
 
     // --- CLINICS ---
     if (type === "all" || type === "clinics") {
-      let baseQuery = { ...geoFilter, isActive: true };
+      let baseQuery = { isActive: true };
 
       let clinics;
-      if (q && lat && lng) {
-        clinics = await Clinic.find(baseQuery)
-          .select("-reviews -__v")
-          .populate("doctors.doctor", "name qualification experience")
-          .limit(lim * 5)
-          .lean();
-        clinics = clinics
-          .filter((cl) => matchesText(cl, q, ["name"]))
-          .slice(0, lim);
-      } else if (q) {
+      if (q) {
         const regex = new RegExp(q, "i");
 
         // Find matching departments
@@ -294,6 +314,7 @@ router.get("/", async (req, res) => {
                 { "address.city": locationRegex },
                 { "address.state": locationRegex },
                 { place: locationRegex },
+                { state: locationRegex },
               ],
             }
           : {};
@@ -309,9 +330,8 @@ router.get("/", async (req, res) => {
         })
           .select("-reviews -__v")
           .populate("doctors.doctor", "name qualification experience")
-          .limit(lim)
-          .skip(skip)
-          .sort({ name: 1 });
+          .limit(lim * 3) // Get more results for distance sorting
+          .lean();
       } else {
         const clinicLocationFilter = locationRegex
           ? {
@@ -319,6 +339,7 @@ router.get("/", async (req, res) => {
                 { "address.city": locationRegex },
                 { "address.state": locationRegex },
                 { place: locationRegex },
+                { state: locationRegex },
               ],
             }
           : {};
@@ -326,10 +347,23 @@ router.get("/", async (req, res) => {
         clinics = await Clinic.find({ ...baseQuery, ...clinicLocationFilter })
           .select("-reviews -__v")
           .populate("doctors.doctor", "name qualification experience")
-          .limit(lim)
-          .skip(skip)
-          .sort({ "rating.average": -1 });
+          .limit(lim * 3) // Get more results for distance sorting
+          .lean();
       }
+
+      // Add distance calculation and sort by distance
+      if (userLat && userLng) {
+        clinics = addDistanceToResults(clinics, userLat, userLng);
+        clinics = sortByDistance(clinics);
+        // Filter by max distance if coordinates are available
+        clinics = clinics.filter(
+          (c) => c.distance === null || c.distance <= parseInt(distance)
+        );
+      }
+
+      // Apply pagination after distance sorting
+      clinics = clinics.slice(skip, skip + lim);
+
       results.clinics = clinics;
     }
 
@@ -345,6 +379,7 @@ router.get("/", async (req, res) => {
                 { place: locationRegex },
                 { state: locationRegex },
                 { address: locationRegex },
+                { city: locationRegex },
               ],
             }
           : {};
@@ -354,9 +389,8 @@ router.get("/", async (req, res) => {
           ...pathologyLocationFilter,
           $or: [{ name: regex }, { category: regex }, { description: regex }],
         })
-          .limit(lim)
-          .skip(skip)
-          .sort({ name: 1 });
+          .limit(lim * 3) // Get more results for distance sorting
+          .lean();
       } else {
         const pathologyLocationFilter = locationRegex
           ? {
@@ -364,6 +398,7 @@ router.get("/", async (req, res) => {
                 { place: locationRegex },
                 { state: locationRegex },
                 { address: locationRegex },
+                { city: locationRegex },
               ],
             }
           : {};
@@ -372,65 +407,108 @@ router.get("/", async (req, res) => {
           ...baseQuery,
           ...pathologyLocationFilter,
         })
-          .limit(lim)
-          .skip(skip)
-          .sort({ createdAt: -1 });
+          .limit(lim * 3) // Get more results for distance sorting
+          .lean();
       }
+
+      // Add distance calculation and sort by distance
+      if (userLat && userLng) {
+        pathologies = addDistanceToResults(pathologies, userLat, userLng);
+        pathologies = sortByDistance(pathologies);
+        // Filter by max distance if coordinates are available
+        pathologies = pathologies.filter(
+          (p) => p.distance === null || p.distance <= parseInt(distance)
+        );
+      }
+
+      // Apply pagination after distance sorting
+      pathologies = pathologies.slice(skip, skip + lim);
+
       results.pathologies = pathologies;
     }
 
     // --- PHARMACIES ---
     if (type === "all" || type === "pharmacies") {
-      let baseQuery = { ...geoFilter, isActive: true };
+      let baseQuery = { isActive: true };
 
       let pharmacies;
-      if (q && lat && lng) {
-        pharmacies = await Pharmacy.find(baseQuery)
-          .select("-reviews -medications -__v")
-          .limit(lim * 5)
-          .lean();
-        pharmacies = pharmacies
-          .filter((ph) => matchesText(ph, q, ["name"]))
-          .slice(0, lim);
-      } else if (q) {
+      if (q) {
+        const regex = new RegExp(q, "i");
+        const pharmacyLocationFilter = locationRegex
+          ? {
+              $or: [
+                { "address.city": locationRegex },
+                { "address.state": locationRegex },
+                { city: locationRegex },
+                { state: locationRegex },
+              ],
+            }
+          : {};
+
         try {
           pharmacies = await Pharmacy.find({
             $text: { $search: q },
             ...baseQuery,
+            ...pharmacyLocationFilter,
           })
             .select("-reviews -medications -__v")
-            .limit(lim)
-            .skip(skip)
-            .sort({ score: { $meta: "textScore" } });
+            .limit(lim * 3)
+            .lean();
         } catch (error) {
           // Fallback to manual search if text index fails
-          pharmacies = await Pharmacy.find(baseQuery)
+          pharmacies = await Pharmacy.find({
+            ...baseQuery,
+            ...pharmacyLocationFilter,
+            name: regex,
+          })
             .select("-reviews -medications -__v")
-            .limit(lim * 2)
-            .skip(skip)
+            .limit(lim * 3)
             .lean();
-
-          pharmacies = pharmacies
-            .filter((ph) => matchesText(ph, q, ["name"]))
-            .slice(0, lim);
         }
       } else {
-        pharmacies = await Pharmacy.find(baseQuery)
+        const pharmacyLocationFilter = locationRegex
+          ? {
+              $or: [
+                { "address.city": locationRegex },
+                { "address.state": locationRegex },
+                { city: locationRegex },
+                { state: locationRegex },
+              ],
+            }
+          : {};
+
+        pharmacies = await Pharmacy.find({
+          ...baseQuery,
+          ...pharmacyLocationFilter,
+        })
           .select("-reviews -medications -__v")
-          .limit(lim)
-          .skip(skip)
-          .sort({ "rating.average": -1 });
+          .limit(lim * 3)
+          .lean();
       }
+
+      // Add distance calculation and sort by distance
+      if (userLat && userLng) {
+        pharmacies = addDistanceToResults(pharmacies, userLat, userLng);
+        pharmacies = sortByDistance(pharmacies);
+        // Filter by max distance if coordinates are available
+        pharmacies = pharmacies.filter(
+          (p) => p.distance === null || p.distance <= parseInt(distance)
+        );
+      }
+
+      // Apply pagination after distance sorting
+      pharmacies = pharmacies.slice(skip, skip + lim);
+
       results.pharmacies = pharmacies;
     }
 
     // --- AMBULANCES ---
     if (type === "all" || type === "ambulance") {
-      let baseQuery = { ...geoFilter, isActive: true };
+      let baseQuery = { isActive: true };
 
       let ambulances;
-      if (q && lat && lng) {
-        // Geo first, then manual text search
+      if (q) {
+        const regex = new RegExp(q, "i");
         const ambulanceLocationFilter = locationRegex
           ? {
               $or: [
@@ -441,60 +519,29 @@ router.get("/", async (req, res) => {
             }
           : {};
 
-        ambulances = await Ambulance.find({
-          ...baseQuery,
-          ...ambulanceLocationFilter,
-        })
-          .limit(lim * 5) // get extra for manual filtering
-          .lean();
-
-        ambulances = ambulances
-          .filter((a) => matchesText(a, q, ["name", "city", "location"]))
-          .slice(0, lim);
-      } else if (q) {
         try {
           // Try text search first
-          const ambulanceLocationFilter = locationRegex
-            ? {
-                $or: [
-                  { city: locationRegex },
-                  { state: locationRegex },
-                  { location: locationRegex },
-                ],
-              }
-            : {};
-
           ambulances = await Ambulance.find({
             $text: { $search: q },
             ...baseQuery,
             ...ambulanceLocationFilter,
           })
-            .limit(lim)
-            .skip(skip)
-            .sort({ score: { $meta: "textScore" } });
+            .limit(lim * 3)
+            .lean();
         } catch (error) {
           // Fallback to manual search if text index fails
-          const ambulanceLocationFilter = locationRegex
-            ? {
-                $or: [
-                  { city: locationRegex },
-                  { state: locationRegex },
-                  { location: locationRegex },
-                ],
-              }
-            : {};
-
           ambulances = await Ambulance.find({
             ...baseQuery,
             ...ambulanceLocationFilter,
+            $or: [
+              { name: regex },
+              { city: regex },
+              { location: regex },
+              { driverName: regex },
+            ],
           })
-            .limit(lim * 2)
-            .skip(skip)
+            .limit(lim * 3)
             .lean();
-
-          ambulances = ambulances
-            .filter((a) => matchesText(a, q, ["name", "city", "location"]))
-            .slice(0, lim);
         }
       } else {
         const ambulanceLocationFilter = locationRegex
@@ -511,10 +558,30 @@ router.get("/", async (req, res) => {
           ...baseQuery,
           ...ambulanceLocationFilter,
         })
-          .limit(lim)
-          .skip(skip)
-          .sort({ isAvailable: -1, name: 1 });
+          .limit(lim * 3)
+          .lean();
       }
+
+      // Add distance calculation and sort by distance
+      if (userLat && userLng) {
+        ambulances = addDistanceToResults(ambulances, userLat, userLng);
+        ambulances = sortByDistance(ambulances);
+        // Filter by max distance if coordinates are available
+        ambulances = ambulances.filter(
+          (a) => a.distance === null || a.distance <= parseInt(distance)
+        );
+      } else {
+        // Sort by availability if no location provided
+        ambulances = ambulances.sort((a, b) => {
+          if (a.isAvailable && !b.isAvailable) return -1;
+          if (!a.isAvailable && b.isAvailable) return 1;
+          return 0;
+        });
+      }
+
+      // Apply pagination after distance sorting
+      ambulances = ambulances.slice(skip, skip + lim);
+
       results.ambulances = ambulances;
     }
 

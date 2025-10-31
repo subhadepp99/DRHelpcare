@@ -1,7 +1,7 @@
 const express = require("express");
 const multer = require("multer");
 const Ambulance = require("../models/Ambulance");
-const { auth, adminAuth } = require("../middleware/auth");
+const { auth } = require("../middleware/auth");
 const { createActivity } = require("../utils/activity");
 
 const router = express.Router();
@@ -13,7 +13,7 @@ const upload = multer({
 });
 
 // Get all ambulances (admin and above only)
-router.get("/", adminAuth, async (req, res) => {
+router.get("/", auth, async (req, res) => {
   try {
     const { page = 1, limit = 100, search = "" } = req.query;
     const skip = (page - 1) * limit;
@@ -59,7 +59,7 @@ router.get("/", adminAuth, async (req, res) => {
 });
 
 // Get ambulance by ID (admin and above only)
-router.get("/:id", adminAuth, async (req, res) => {
+router.get("/:id", auth, async (req, res) => {
   try {
     const ambulance = await Ambulance.findById(req.params.id);
 
@@ -102,7 +102,7 @@ router.get("/public/:id", async (req, res) => {
 });
 
 // Create new ambulance (admin and above only)
-router.post("/", adminAuth, upload.single("image"), async (req, res) => {
+router.post("/", auth, upload.single("image"), async (req, res) => {
   try {
     const ambulanceData = { ...req.body };
 
@@ -143,15 +143,6 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
   } catch (error) {
     console.error("Create ambulance error:", error);
 
-    // Clean up uploaded file if error occurred
-    if (req.file) {
-      try {
-        await fs.unlink(req.file.path);
-      } catch (unlinkError) {
-        console.error("Failed to delete uploaded file:", unlinkError);
-      }
-    }
-
     res.status(500).json({
       success: false,
       message: "Failed to create ambulance",
@@ -161,7 +152,7 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
 });
 
 // Update ambulance (admin and above only)
-router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
+router.put("/:id", auth, upload.single("image"), async (req, res) => {
   try {
     const ambulance = await Ambulance.findById(req.params.id);
 
@@ -216,15 +207,6 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
   } catch (error) {
     console.error("Update ambulance error:", error);
 
-    // Clean up uploaded file if error occurred
-    if (req.file) {
-      try {
-        await fs.unlink(req.file.path);
-      } catch (unlinkError) {
-        console.error("Failed to delete uploaded file:", unlinkError);
-      }
-    }
-
     res.status(500).json({
       success: false,
       message: "Failed to update ambulance",
@@ -234,7 +216,7 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
 });
 
 // Delete ambulance (admin and above only)
-router.delete("/:id", adminAuth, async (req, res) => {
+router.delete("/:id", auth, async (req, res) => {
   try {
     const ambulance = await Ambulance.findById(req.params.id);
 

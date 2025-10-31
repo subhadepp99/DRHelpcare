@@ -38,6 +38,16 @@ const ambulanceSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    state: {
+      type: String,
+      required: false,
+      trim: true,
+    },
+    coordinates: {
+      type: [Number], // [longitude, latitude]
+      index: "2dsphere",
+      default: [0, 0],
+    },
     isAvailable: {
       type: Boolean,
       default: true,
@@ -51,6 +61,18 @@ const ambulanceSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    rating: {
+      average: { type: Number, default: 0, min: 0, max: 5 },
+      count: { type: Number, default: 0 },
+    },
+    reviews: [
+      {
+        patient: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        rating: { type: Number, required: true, min: 1, max: 5 },
+        comment: String,
+        date: { type: Date, default: Date.now },
+      },
+    ],
   },
   {
     timestamps: true,

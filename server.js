@@ -90,6 +90,7 @@ app.use("/api/clinics", require("./routes/clinics"));
 app.use("/api/pharmacies", require("./routes/pharmacies"));
 app.use("/api/pathology", require("./routes/pathology"));
 app.use("/api/pathologies", require("./routes/pathology")); // Admin panel uses plural
+app.use("/api/tests", require("./routes/tests"));
 app.use("/api/departments", require("./routes/department"));
 app.use("/api/bookings", require("./routes/bookings"));
 app.use("/api/ambulances", require("./routes/ambulances"));
@@ -98,6 +99,7 @@ app.use("/api/faqs", require("./routes/faqs"));
 app.use("/api/access-requests", require("./routes/accessRequests"));
 app.use("/api/dashboard", require("./routes/dashboard"));
 app.use("/api/search", require("./routes/search"));
+app.use("/api/reviews", require("./routes/reviews"));
 
 // Health check endpoint
 app.get("/api/health", (req, res) => {

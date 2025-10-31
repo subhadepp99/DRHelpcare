@@ -70,33 +70,17 @@ router.get("/test", async (req, res) => {
 // Get test packages - MUST come before /:id route
 router.get("/test-packages", async (req, res) => {
   try {
-    // //console.log("Fetching test packages...");
-
-    // First, let's check if there are any pathology records at all
-    const totalCount = await Pathology.countDocuments();
-    // //console.log("Total pathology records:", totalCount);
-
-    // Since existing data might not have isPackage field, let's get all records
-    // and filter by category or name patterns that suggest packages
-    const allPathologies = await Pathology.find()
+    // Fetch only pathology packages (isPackage: true)
+    const packages = await Pathology.find({ isPackage: true, isActive: true })
       .select(
-        "name description price discountedPrice category imageUrl licenseNumber email phone address place state"
+        "name description price discountedPrice category imageUrl licenseNumber email phone address place state homeCollection"
       )
       .limit(20);
-
-    // //console.log("All pathologies found:", allPathologies.length);
-
-    // For now, return all pathologies as packages to ensure data is displayed
-    // This can be refined later when we have better data structure
-    const packages = allPathologies;
-
-    // //console.log("Filtered packages:", packages.length);
-    // //console.log("Packages:", packages);
 
     res.json({
       success: true,
       data: {
-        testPackages: packages.slice(0, 10), // Limit to 10
+        testPackages: packages,
       },
     });
   } catch (error) {
@@ -111,8 +95,11 @@ router.get("/test-packages", async (req, res) => {
 // Get individual tests - MUST come before /:id route
 router.get("/tests", async (req, res) => {
   try {
-    // For now, get all pathologies as tests since existing data might not have isPackage field
-    const tests = await Pathology.find()
+    // Fetch only individual pathology tests (isPackage: false or undefined)
+    const tests = await Pathology.find({
+      $or: [{ isPackage: false }, { isPackage: { $exists: false } }],
+      isActive: true,
+    })
       .select(
         "name description price discountedPrice category preparationInstructions reportTime homeCollection licenseNumber email phone address place state"
       )

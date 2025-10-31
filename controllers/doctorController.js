@@ -83,6 +83,7 @@ exports.createDoctor = async (req, res) => {
 exports.getAllDoctors = async (req, res) => {
   try {
     const { page = 1, limit = 10, specialization, city } = req.query;
+    const Review = require("../models/Review");
 
     let query = { isActive: true };
 
@@ -104,7 +105,7 @@ exports.getAllDoctors = async (req, res) => {
 
     const total = await Doctor.countDocuments(query);
 
-    // Add image as base64 string in the list (without binary data)
+    // Add image as base64 string and review stats
     const doctorsWithImage = await Promise.all(
       doctors.map(async (doc) => {
         let imageBase64 = null;
@@ -113,9 +114,36 @@ exports.getAllDoctors = async (req, res) => {
             doc.image.contentType
           };base64,${doc.image.data.toString("base64")}`;
         }
+
+        // Get review stats
+        const reviewStats = await Review.aggregate([
+          {
+            $match: {
+              entityType: "Doctor",
+              entityId: doc._id,
+              isApproved: true,
+              isActive: true,
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              averageRating: { $avg: "$rating" },
+              totalReviews: { $sum: 1 },
+            },
+          },
+        ]);
+
+        const stats = reviewStats[0] || {
+          averageRating: 0,
+          totalReviews: 0,
+        };
+
         return {
           ...doc.toObject(),
           image: imageBase64,
+          rating: Math.round(stats.averageRating * 10) / 10,
+          reviewCount: stats.totalReviews,
         };
       })
     );
