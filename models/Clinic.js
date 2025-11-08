@@ -7,6 +7,11 @@ const clinicSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    description: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     registrationNumber: {
       type: String,
       required: false, // Made optional

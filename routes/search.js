@@ -104,6 +104,9 @@ router.get("/", async (req, res) => {
       limit = 20,
       page = 1,
     } = req.query;
+    
+    console.log("=== SEARCH REQUEST ===");
+    console.log("Query params:", { q, type, city, lat, lng, limit, page });
     // Handle search queries with different character lengths
     const hasValidSearchQuery = q && q.trim().length >= 3;
     const hasShortQuery = q && q.trim().length > 0 && q.trim().length < 3;
@@ -115,8 +118,52 @@ router.get("/", async (req, res) => {
     const userLng = lng ? parseFloat(lng) : null;
     const maxDistance = parseInt(distance) * 1000; // Convert km to meters
 
-    // Substring location matcher used across entities
-    const locationRegex = city ? new RegExp(city, "i") : null;
+    // Parse location string - could be "City" or "City, State"
+    let cityPart = null;
+    let statePart = null;
+    let locationRegex = null;
+    
+    if (city) {
+      const parts = city.split(',').map(p => p.trim());
+      if (parts.length > 1) {
+        // Has both city and state
+        cityPart = parts[0];
+        statePart = parts[1];
+      } else {
+        // Just city or state
+        cityPart = parts[0];
+      }
+      // Create regex for the full string for backwards compatibility
+      locationRegex = new RegExp(city, "i");
+    }
+    
+    // Helper function to build location filters for different entity types
+    const buildLocationFilter = (cityFields, stateFields) => {
+      if (!locationRegex) return {};
+      
+      const conditions = [];
+      
+      // Add full location regex matches
+      cityFields.forEach(field => conditions.push({ [field]: locationRegex }));
+      stateFields.forEach(field => conditions.push({ [field]: locationRegex }));
+      
+      // If we have both city and state parts, match them together
+      if (cityPart && statePart) {
+        conditions.push({
+          $and: [
+            { $or: cityFields.map(field => ({ [field]: new RegExp(cityPart, "i") })) },
+            { $or: stateFields.map(field => ({ [field]: new RegExp(statePart, "i") })) }
+          ]
+        });
+      }
+      
+      // Also match just the city part
+      if (cityPart) {
+        cityFields.forEach(field => conditions.push({ [field]: new RegExp(cityPart, "i") }));
+      }
+      
+      return { $or: conditions };
+    };
 
     // --- DOCTORS ---
     if (type === "all" || type === "doctors") {
@@ -196,17 +243,14 @@ router.get("/", async (req, res) => {
 
       let doctors;
 
-      // Build location filter
-      const doctorLocationFilter = locationRegex
-        ? {
-            $or: [
-              { "address.city": locationRegex },
-              { "address.state": locationRegex },
-              { city: locationRegex },
-              { state: locationRegex },
-            ],
-          }
-        : {};
+      // Build location filter - handle "City, State" format
+      const doctorLocationFilter = buildLocationFilter(
+        ["address.city", "city"],
+        ["address.state", "state"]
+      );
+      
+      console.log("Doctor location filter:", JSON.stringify(doctorLocationFilter, null, 2));
+      console.log("Doctor base query:", JSON.stringify(baseQuery, null, 2));
 
       if (q) {
         // Text search with location filter
@@ -228,9 +272,8 @@ router.get("/", async (req, res) => {
           departmentIds = [];
         }
 
-        doctors = await Doctor.find({
+        const searchQuery = {
           ...baseQuery,
-          ...doctorLocationFilter,
           $or: [
             { name: regex },
             { specialization: regex },
@@ -239,7 +282,16 @@ router.get("/", async (req, res) => {
               ? { department: { $in: departmentIds } }
               : null,
           ].filter(Boolean),
-        })
+        };
+
+        // Add location filter if present
+        if (Object.keys(doctorLocationFilter).length > 0) {
+          searchQuery.$and = [doctorLocationFilter];
+        }
+
+        console.log("Doctor search query with text:", JSON.stringify(searchQuery, null, 2));
+
+        doctors = await Doctor.find(searchQuery)
           .select("-reviews -__v")
           .populate("department", "name")
           .populate("clinicDetails.clinic", "name address place state city")
@@ -247,13 +299,24 @@ router.get("/", async (req, res) => {
           .lean();
       } else {
         // No text query, just location and filters
-        doctors = await Doctor.find({ ...baseQuery, ...doctorLocationFilter })
+        const searchQuery = { ...baseQuery };
+        
+        // Add location filter if present
+        if (Object.keys(doctorLocationFilter).length > 0) {
+          Object.assign(searchQuery, doctorLocationFilter);
+        }
+        
+        console.log("Doctor search query (location only):", JSON.stringify(searchQuery, null, 2));
+        
+        doctors = await Doctor.find(searchQuery)
           .select("-reviews -__v")
           .populate("department", "name")
           .populate("clinicDetails.clinic", "name address place state city")
           .limit(lim * 3) // Get more results for distance sorting
           .lean();
       }
+
+      console.log(`Found ${doctors.length} doctors before distance sorting`);
 
       // Add distance calculation and sort by distance
       if (userLat && userLng) {
@@ -268,6 +331,7 @@ router.get("/", async (req, res) => {
       // Apply pagination after distance sorting
       doctors = doctors.slice(skip, skip + lim);
 
+      console.log(`Found ${doctors.length} doctors`);
       results.doctors = doctors;
     }
 
@@ -276,6 +340,11 @@ router.get("/", async (req, res) => {
       let baseQuery = { isActive: true };
 
       let clinics;
+      const clinicLocationFilter = buildLocationFilter(
+        ["place", "city"],
+        ["state"]
+      );
+      
       if (q) {
         const regex = new RegExp(q, "i");
 
@@ -308,43 +377,36 @@ router.get("/", async (req, res) => {
         }).select("_id");
         const doctorIds = doctorMatch.map((d) => d._id);
 
-        const clinicLocationFilter = locationRegex
-          ? {
-              $or: [
-                { "address.city": locationRegex },
-                { "address.state": locationRegex },
-                { place: locationRegex },
-                { state: locationRegex },
-              ],
-            }
-          : {};
-
-        clinics = await Clinic.find({
+        const searchQuery = {
           ...baseQuery,
-          ...clinicLocationFilter,
           $or: [
             { name: regex },
             { services: { $in: [regex] } },
             doctorIds.length ? { "doctors.doctor": { $in: doctorIds } } : null,
           ].filter(Boolean),
-        })
+        };
+
+        // Add location filter if present
+        if (Object.keys(clinicLocationFilter).length > 0) {
+          searchQuery.$and = [clinicLocationFilter];
+        }
+
+        clinics = await Clinic.find(searchQuery)
           .select("-reviews -__v")
           .populate("doctors.doctor", "name qualification experience")
           .limit(lim * 3) // Get more results for distance sorting
           .lean();
       } else {
-        const clinicLocationFilter = locationRegex
-          ? {
-              $or: [
-                { "address.city": locationRegex },
-                { "address.state": locationRegex },
-                { place: locationRegex },
-                { state: locationRegex },
-              ],
-            }
-          : {};
+        const searchQuery = { ...baseQuery };
+        
+        // Add location filter if present
+        if (Object.keys(clinicLocationFilter).length > 0) {
+          Object.assign(searchQuery, clinicLocationFilter);
+        }
 
-        clinics = await Clinic.find({ ...baseQuery, ...clinicLocationFilter })
+        console.log("Clinic search query (location only):", JSON.stringify(searchQuery, null, 2));
+
+        clinics = await Clinic.find(searchQuery)
           .select("-reviews -__v")
           .populate("doctors.doctor", "name qualification experience")
           .limit(lim * 3) // Get more results for distance sorting
@@ -371,42 +433,36 @@ router.get("/", async (req, res) => {
     if (type === "all" || type === "pathology") {
       let baseQuery = { isActive: true };
       let pathologies;
+      const pathologyLocationFilter = buildLocationFilter(
+        ["place", "address", "city"],
+        ["state"]
+      );
+      
       if (q) {
         const regex = new RegExp(q, "i");
-        const pathologyLocationFilter = locationRegex
-          ? {
-              $or: [
-                { place: locationRegex },
-                { state: locationRegex },
-                { address: locationRegex },
-                { city: locationRegex },
-              ],
-            }
-          : {};
 
-        pathologies = await Pathology.find({
+        const searchQuery = {
           ...baseQuery,
-          ...pathologyLocationFilter,
           $or: [{ name: regex }, { category: regex }, { description: regex }],
-        })
+        };
+
+        // Add location filter if present
+        if (Object.keys(pathologyLocationFilter).length > 0) {
+          searchQuery.$and = [pathologyLocationFilter];
+        }
+
+        pathologies = await Pathology.find(searchQuery)
           .limit(lim * 3) // Get more results for distance sorting
           .lean();
       } else {
-        const pathologyLocationFilter = locationRegex
-          ? {
-              $or: [
-                { place: locationRegex },
-                { state: locationRegex },
-                { address: locationRegex },
-                { city: locationRegex },
-              ],
-            }
-          : {};
+        const searchQuery = { ...baseQuery };
+        
+        // Add location filter if present
+        if (Object.keys(pathologyLocationFilter).length > 0) {
+          Object.assign(searchQuery, pathologyLocationFilter);
+        }
 
-        pathologies = await Pathology.find({
-          ...baseQuery,
-          ...pathologyLocationFilter,
-        })
+        pathologies = await Pathology.find(searchQuery)
           .limit(lim * 3) // Get more results for distance sorting
           .lean();
       }
@@ -432,55 +488,55 @@ router.get("/", async (req, res) => {
       let baseQuery = { isActive: true };
 
       let pharmacies;
+      const pharmacyLocationFilter = buildLocationFilter(
+        ["city", "place"],
+        ["state"]
+      );
+      
       if (q) {
         const regex = new RegExp(q, "i");
-        const pharmacyLocationFilter = locationRegex
-          ? {
-              $or: [
-                { "address.city": locationRegex },
-                { "address.state": locationRegex },
-                { city: locationRegex },
-                { state: locationRegex },
-              ],
-            }
-          : {};
 
         try {
-          pharmacies = await Pharmacy.find({
+          const searchQuery = {
             $text: { $search: q },
             ...baseQuery,
-            ...pharmacyLocationFilter,
-          })
+          };
+          
+          // Add location filter if present
+          if (Object.keys(pharmacyLocationFilter).length > 0) {
+            searchQuery.$and = [pharmacyLocationFilter];
+          }
+          
+          pharmacies = await Pharmacy.find(searchQuery)
             .select("-reviews -medications -__v")
             .limit(lim * 3)
             .lean();
         } catch (error) {
           // Fallback to manual search if text index fails
-          pharmacies = await Pharmacy.find({
+          const searchQuery = {
             ...baseQuery,
-            ...pharmacyLocationFilter,
             name: regex,
-          })
+          };
+          
+          // Add location filter if present
+          if (Object.keys(pharmacyLocationFilter).length > 0) {
+            Object.assign(searchQuery, pharmacyLocationFilter);
+          }
+          
+          pharmacies = await Pharmacy.find(searchQuery)
             .select("-reviews -medications -__v")
             .limit(lim * 3)
             .lean();
         }
       } else {
-        const pharmacyLocationFilter = locationRegex
-          ? {
-              $or: [
-                { "address.city": locationRegex },
-                { "address.state": locationRegex },
-                { city: locationRegex },
-                { state: locationRegex },
-              ],
-            }
-          : {};
+        const searchQuery = { ...baseQuery };
+        
+        // Add location filter if present
+        if (Object.keys(pharmacyLocationFilter).length > 0) {
+          Object.assign(searchQuery, pharmacyLocationFilter);
+        }
 
-        pharmacies = await Pharmacy.find({
-          ...baseQuery,
-          ...pharmacyLocationFilter,
-        })
+        pharmacies = await Pharmacy.find(searchQuery)
           .select("-reviews -medications -__v")
           .limit(lim * 3)
           .lean();
@@ -507,57 +563,37 @@ router.get("/", async (req, res) => {
       let baseQuery = { isActive: true };
 
       let ambulances;
-      if (q) {
+      // For ambulances, ONLY search by location (city, state, location)
+      // Ignore text query for name/driverName - user requirement
+      const ambulanceLocationFilter = buildLocationFilter(
+        ["city", "location"],
+        ["state"]
+      );
+
+      // If query is provided, treat it as location search only
+      if (q && !locationRegex) {
         const regex = new RegExp(q, "i");
-        const ambulanceLocationFilter = locationRegex
-          ? {
-              $or: [
-                { city: locationRegex },
-                { state: locationRegex },
-                { location: locationRegex },
-              ],
-            }
-          : {};
-
-        try {
-          // Try text search first
-          ambulances = await Ambulance.find({
-            $text: { $search: q },
-            ...baseQuery,
-            ...ambulanceLocationFilter,
-          })
-            .limit(lim * 3)
-            .lean();
-        } catch (error) {
-          // Fallback to manual search if text index fails
-          ambulances = await Ambulance.find({
-            ...baseQuery,
-            ...ambulanceLocationFilter,
-            $or: [
-              { name: regex },
-              { city: regex },
-              { location: regex },
-              { driverName: regex },
-            ],
-          })
-            .limit(lim * 3)
-            .lean();
-        }
-      } else {
-        const ambulanceLocationFilter = locationRegex
-          ? {
-              $or: [
-                { city: locationRegex },
-                { state: locationRegex },
-                { location: locationRegex },
-              ],
-            }
-          : {};
-
         ambulances = await Ambulance.find({
           ...baseQuery,
-          ...ambulanceLocationFilter,
+          $or: [
+            { city: regex },
+            { state: regex },
+            { location: regex },
+          ],
         })
+          .limit(lim * 3)
+          .lean();
+      } else {
+        const searchQuery = { ...baseQuery };
+        
+        // Add location filter if present
+        if (Object.keys(ambulanceLocationFilter).length > 0) {
+          Object.assign(searchQuery, ambulanceLocationFilter);
+        }
+        
+        console.log("Ambulance search query (location only):", JSON.stringify(searchQuery, null, 2));
+        
+        ambulances = await Ambulance.find(searchQuery)
           .limit(lim * 3)
           .lean();
       }
@@ -591,6 +627,9 @@ router.get("/", async (req, res) => {
       0
     );
 
+    console.log("Total results:", totalResults);
+    console.log("Results breakdown:", Object.keys(results).map(k => `${k}: ${results[k]?.length || 0}`).join(", "));
+    
     res.json({
       success: true,
       results,
