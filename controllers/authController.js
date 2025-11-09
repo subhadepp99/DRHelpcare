@@ -55,11 +55,11 @@ exports.register = async (req, res) => {
       role = "user",
     } = req.body;
 
-    // Validation
-    if (!username || !email || !password || !firstName || !lastName || !phone) {
+    // Validation - email is now optional, phone is mandatory
+    if (!username || !password || !firstName || !lastName || !phone) {
       return res.status(400).json({
         success: false,
-        message: "All required fields must be provided",
+        message: "Username, password, first name, last name, and phone are required",
       });
     }
 
@@ -71,18 +71,24 @@ exports.register = async (req, res) => {
     }
 
     // Check if user already exists
+    const queryConditions = [
+      { username: username.toLowerCase() },
+      { phone },
+    ];
+    
+    // Only check email if it's provided
+    if (email) {
+      queryConditions.push({ email: email.toLowerCase() });
+    }
+    
     const existingUser = await User.findOne({
-      $or: [
-        { email: email.toLowerCase() },
-        { username: username.toLowerCase() },
-        { phone },
-      ],
+      $or: queryConditions,
     });
 
     if (existingUser) {
-      let field = "email";
+      let field = "phone number";
       if (existingUser.username === username.toLowerCase()) field = "username";
-      if (existingUser.phone === phone) field = "phone number";
+      if (email && existingUser.email === email.toLowerCase()) field = "email";
 
       return res.status(400).json({
         success: false,

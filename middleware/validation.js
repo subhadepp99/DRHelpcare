@@ -30,6 +30,7 @@ const validateUserRegistration = [
     .withMessage("Username can only contain letters, numbers, and underscores"),
 
   body("email")
+    .optional({ checkFalsy: true })
     .isEmail()
     .withMessage("Please provide a valid email address")
     .normalizeEmail(),
@@ -53,6 +54,8 @@ const validateUserRegistration = [
     .withMessage("Last name is required and must be less than 50 characters"),
 
   body("phone")
+    .notEmpty()
+    .withMessage("Phone number is required")
     .matches(/^[\+]?[1-9][\d]{0,15}$/)
     .withMessage("Please provide a valid phone number"),
 

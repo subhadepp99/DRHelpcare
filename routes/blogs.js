@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const Blog = require("../models/Blog");
+const { auth, adminAuth, optionalAuth } = require("../middleware/auth");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
@@ -26,7 +27,7 @@ const upload = multer({
 });
 
 // Get all blogs (with pagination and filters)
-router.get("/", async (req, res) => {
+router.get("/", optionalAuth, async (req, res) => {
   try {
     const {
       page = 1,
@@ -46,10 +47,11 @@ router.get("/", async (req, res) => {
     // Filter by published status
     if (isPublished !== undefined) {
       query.isPublished = isPublished === "true";
-    } else {
+    } else if (!req.user || (req.user.role !== "admin" && req.user.role !== "superuser")) {
       // By default, only show published blogs to non-admins
       query.isPublished = true;
     }
+    // If user is admin/superuser and isPublished is not specified, show all blogs
 
     // Search functionality
     if (search) {
@@ -148,7 +150,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // Create new blog (admin only)
-router.post("/", upload.single("image"), async (req, res) => {
+router.post("/", auth, adminAuth, upload.single("image"), async (req, res) => {
   try {
     const {
       title,
@@ -217,7 +219,7 @@ router.post("/", upload.single("image"), async (req, res) => {
 });
 
 // Update blog (admin only)
-router.put("/:id", upload.single("image"), async (req, res) => {
+router.put("/:id", auth, adminAuth, upload.single("image"), async (req, res) => {
   try {
     const {
       title,
@@ -288,7 +290,7 @@ router.put("/:id", upload.single("image"), async (req, res) => {
 });
 
 // Delete blog (admin only)
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", auth, adminAuth, async (req, res) => {
   try {
     const blog = await Blog.findByIdAndDelete(req.params.id);
 

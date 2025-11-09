@@ -63,6 +63,11 @@ const doctorSchema = new mongoose.Schema(
       contentType: String,
     },
     imageUrl: String, // Public URL for doctor image
+    pinLocation: {
+      type: String,
+      required: false,
+      trim: true,
+    }, // Google Maps link or embed URL for location pinning
     address: {
       street: String,
       city: String,

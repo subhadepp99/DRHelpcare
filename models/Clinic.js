@@ -127,6 +127,11 @@ const clinicSchema = new mongoose.Schema(
       contentType: String,
     },
     imageUrl: String, // Public URL for clinic image (kept for backward compatibility)
+    pinLocation: {
+      type: String,
+      required: false,
+      trim: true,
+    }, // Google Maps link or embed URL for location pinning
     rating: {
       average: { type: Number, default: 0, min: 0, max: 5 },
       count: { type: Number, default: 0 },
