@@ -30,7 +30,7 @@ const upload = multer({
 // Test route to check if pathology is working
 router.get("/test", async (req, res) => {
   try {
-    // //console.log("Testing pathology endpoint...");
+    console.log("Testing pathology endpoint...");
     const count = await Pathology.countDocuments();
 
     // Test if we can create a minimal pathology object
@@ -47,7 +47,7 @@ router.get("/test", async (req, res) => {
         phone: "1234567890",
         email: "test@test.com",
       });
-      // //console.log("Test pathology model created successfully");
+      console.log("Test pathology model created successfully");
     } catch (modelError) {
       console.error("Test pathology model creation failed:", modelError);
     }
@@ -173,7 +173,7 @@ router.get("/search", async (req, res) => {
   try {
     const { name = "", location = "" } = req.query;
 
-    // //console.log("Pathology search request:", { name, location });
+    console.log("Pathology search request:", { name, location });
 
     const query = {};
 
@@ -196,13 +196,13 @@ router.get("/search", async (req, res) => {
       ];
     }
 
-    // //console.log("Pathology search query:", JSON.stringify(query, null, 2));
+    console.log("Pathology search query:", JSON.stringify(query, null, 2));
 
     // First, let's see what pathologies exist in the database
     const allPathologies = await Pathology.find().select(
       "name place state address"
     );
-    // //console.log("All pathologies in database:", allPathologies);
+    console.log("All pathologies in database:", allPathologies);
 
     const pathologies = await Pathology.find(query)
       .select(
@@ -210,7 +210,7 @@ router.get("/search", async (req, res) => {
       )
       .limit(20);
 
-    // //console.log(`Found ${pathologies.length} pathologies matching the search`);
+    console.log(`Found ${pathologies.length} pathologies matching the search`);
     console.log(
       "Matching pathologies:",
       pathologies.map((p) => ({
@@ -247,7 +247,7 @@ router.get("/by-id/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    // //console.log("Get pathology by ID request:", { id });
+    console.log("Get pathology by ID request:", { id });
 
     const pathology = await Pathology.findById(id).select("-__v");
 
@@ -258,10 +258,10 @@ router.get("/by-id/:id", async (req, res) => {
       });
     }
 
-    // //console.log("Found pathology:", {
-    //   id: pathology._id,
-    //   name: pathology.name,
-    // });
+    console.log("Found pathology:", {
+      id: pathology._id,
+      name: pathology.name,
+    });
 
     res.json({
       success: true,
@@ -282,8 +282,8 @@ router.get("/by-id/:id", async (req, res) => {
 // Create new pathology (admin only)
 router.post("/", auth, upload.single("image"), async (req, res) => {
   try {
-    // //console.log("Auth check - User:", req.user);
-    // //console.log("Auth check - User role:", req.user?.role);
+    console.log("Auth check - User:", req.user);
+    console.log("Auth check - User role:", req.user?.role);
 
     if (req.user.role !== "admin" && req.user.role !== "superuser") {
       return res.status(403).json({
@@ -308,11 +308,11 @@ router.post("/", auth, upload.single("image"), async (req, res) => {
       delete pathologyData.phone;
     }
 
-    // //console.log(
-    //   "Received pathology data:",
-    //   JSON.stringify(pathologyData, null, 2)
-    // );
-    // //console.log("User role:", req.user.role);
+    console.log(
+      "Received pathology data:",
+      JSON.stringify(pathologyData, null, 2)
+    );
+    console.log("User role:", req.user.role);
 
     // Parse JSON fields
     if (
@@ -439,18 +439,18 @@ router.post("/", auth, upload.single("image"), async (req, res) => {
       }
     }
 
-    // //console.log(
-    //   "Final pathology data before save:",
-    //   JSON.stringify(pathologyData, null, 2)
-    // );
+    console.log(
+      "Final pathology data before save:",
+      JSON.stringify(pathologyData, null, 2)
+    );
 
     let createdPathology;
     try {
       const pathology = new Pathology(pathologyData);
-      // //console.log("Pathology model created successfully");
+      console.log("Pathology model created successfully");
 
       await pathology.save();
-      // //console.log("Pathology saved successfully");
+      console.log("Pathology saved successfully");
       createdPathology = pathology;
     } catch (saveError) {
       console.error("Save error details:", {
@@ -522,8 +522,8 @@ router.get("/:id", async (req, res) => {
 // Update pathology (admin only)
 router.put("/:id", auth, upload.single("image"), async (req, res) => {
   try {
-    // //console.log("Auth check - User:", req.user);
-    // //console.log("Auth check - User role:", req.user?.role);
+    console.log("Auth check - User:", req.user);
+    console.log("Auth check - User role:", req.user?.role);
 
     if (req.user.role !== "admin" && req.user.role !== "superuser") {
       return res.status(403).json({
@@ -542,8 +542,8 @@ router.put("/:id", auth, upload.single("image"), async (req, res) => {
       updates.phone = undefined;
     }
 
-    // //console.log("Received update data:", JSON.stringify(updates, null, 2));
-    // //console.log("User role:", req.user.role);
+    console.log("Received update data:", JSON.stringify(updates, null, 2));
+    console.log("User role:", req.user.role);
 
     // Parse JSON-ish fields possibly sent via multipart/form-data
     if (updates.components && typeof updates.components === "string") {
@@ -691,7 +691,7 @@ router.put("/:id", auth, upload.single("image"), async (req, res) => {
       }
     }
 
-    // //console.log("Final update data:", JSON.stringify(updates, null, 2));
+    console.log("Final update data:", JSON.stringify(updates, null, 2));
 
     const updatedPathology = await Pathology.findByIdAndUpdate(
       req.params.id,

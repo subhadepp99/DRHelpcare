@@ -212,7 +212,7 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
           pathologyData.testsOffered
         );
       } catch (e) {
-        //console.log("Tests offered parsing failed, using as is");
+        console.log("Tests offered parsing failed, using as is");
       }
     }
 
@@ -221,7 +221,7 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       try {
         pathologyData.homeCollection = JSON.parse(pathologyData.homeCollection);
       } catch (e) {
-        //console.log("Home collection parsing failed, using as is");
+        console.log("Home collection parsing failed, using as is");
       }
     }
 
@@ -231,7 +231,7 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
           pathologyData.servicesOffered
         );
       } catch (e) {
-        //console.log("Services offered parsing failed, using as is");
+        console.log("Services offered parsing failed, using as is");
       }
     }
 
@@ -328,7 +328,7 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
           pathologyData.testsOffered
         );
       } catch (e) {
-        //console.log("Tests offered parsing failed, using as is");
+        console.log("Tests offered parsing failed, using as is");
       }
     }
 
@@ -337,7 +337,7 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       try {
         pathologyData.homeCollection = JSON.parse(pathologyData.homeCollection);
       } catch (e) {
-        //console.log("Home collection parsing failed, using as is");
+        console.log("Home collection parsing failed, using as is");
       }
     }
 
@@ -347,7 +347,7 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
           pathologyData.servicesOffered
         );
       } catch (e) {
-        //console.log("Services offered parsing failed, using as is");
+        console.log("Services offered parsing failed, using as is");
       }
     }
 
@@ -419,7 +419,7 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       }
     });
 
-    //console.log("Filtered update data:", JSON.stringify(filteredData, null, 2));
+    console.log("Filtered update data:", JSON.stringify(filteredData, null, 2));
 
     // Update the pathology object with filtered data
     Object.assign(pathology, filteredData);
@@ -427,7 +427,7 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
     // Validate and save
     try {
       await pathology.save();
-      //console.log("Pathology saved successfully");
+      console.log("Pathology saved successfully");
     } catch (saveError) {
       console.error("Save error details:", {
         name: saveError.name,

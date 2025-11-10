@@ -68,8 +68,8 @@ const sendOTP = async (phoneNumber, otp, messageType = "login") => {
     );
 
     if (response.data && response.data.return === true) {
-      //console.log(
-      // `SMS sent successfully to ${phoneNumber}. Request ID: ${response.data.request_id}`
+      // console.log(
+      //   `SMS sent successfully to ${phoneNumber}. Request ID: ${response.data.request_id}`
       // );
       return {
         success: true,

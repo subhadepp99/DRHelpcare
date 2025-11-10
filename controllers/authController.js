@@ -53,13 +53,15 @@ exports.register = async (req, res) => {
       lastName,
       phone,
       role = "user",
+      otp,
     } = req.body;
 
     // Validation - email is now optional, phone is mandatory
     if (!username || !password || !firstName || !lastName || !phone) {
       return res.status(400).json({
         success: false,
-        message: "Username, password, first name, last name, and phone are required",
+        message:
+          "Username, password, first name, last name, and phone are required",
       });
     }
 
@@ -70,17 +72,68 @@ exports.register = async (req, res) => {
         .json({ success: false, message: passwordValidation.message });
     }
 
+    // If OTP is provided, verify it
+    if (otp) {
+      console.log(`[Registration] Verifying OTP for phone: ${phone}`);
+
+      // Find the OTP record from database
+      const otpRecord = await OTP.findOne({
+        identifier: phone,
+        type: "verification",
+        isUsed: false,
+        expiresAt: { $gt: new Date() },
+        attempts: { $lt: 3 },
+      });
+
+      if (!otpRecord) {
+        console.log(
+          `[Registration] No valid OTP record found for phone: ${phone}`
+        );
+        return res.status(400).json({
+          success: false,
+          message: "Invalid or expired OTP. Please request a new one.",
+        });
+      }
+
+      console.log(
+        `[Registration] OTP Record found. Input OTP: ${otp}, Stored OTP: ${otpRecord.otp}`
+      );
+
+      // Verify OTP matches (ensure both are strings)
+      const inputOtpStr = String(otp).trim();
+      const storedOtpStr = String(otpRecord.otp).trim();
+
+      if (inputOtpStr !== storedOtpStr) {
+        // Increment attempts
+        await otpRecord.incrementAttempts();
+        console.log(
+          `[Registration] OTP mismatch. Attempts: ${otpRecord.attempts + 1}`
+        );
+
+        return res.status(400).json({
+          success: false,
+          message: "Invalid OTP. Please check and try again.",
+        });
+      }
+
+      console.log(
+        `[Registration] OTP verified successfully for phone: ${phone}`
+      );
+
+      // Mark OTP as used and delete
+      otpRecord.isUsed = true;
+      await otpRecord.save();
+      await OTP.deleteMany({ identifier: phone, type: "verification" });
+    }
+
     // Check if user already exists
-    const queryConditions = [
-      { username: username.toLowerCase() },
-      { phone },
-    ];
-    
+    const queryConditions = [{ username: username.toLowerCase() }, { phone }];
+
     // Only check email if it's provided
     if (email) {
       queryConditions.push({ email: email.toLowerCase() });
     }
-    
+
     const existingUser = await User.findOne({
       $or: queryConditions,
     });
@@ -107,7 +160,7 @@ exports.register = async (req, res) => {
     // Create new user
     const user = new User({
       username: username.toLowerCase(),
-      email: email.toLowerCase(),
+      email: email ? email.toLowerCase() : undefined,
       password: await hashPassword(password),
       firstName,
       lastName,
@@ -801,26 +854,39 @@ exports.registerWithMsg91 = async (req, res) => {
     }
 
     const verification = await verifyMsg91AccessToken(accessToken);
-    if (!verification.success) {
-      return res.status(401).json({
-        success: false,
-        message: verification.message || "MSG91 verification failed",
-        error: verification.error,
-      });
-    }
 
-    const data = verification.data || {};
-    const phone = (data.mobile || data.phone || "")
-      .toString()
-      .replace(/\D/g, "");
-    const email = (data.email || userPayload?.email || "")
-      .toString()
-      .toLowerCase();
+    const verificationData = verification.data || {};
+    const phoneRaw =
+      verificationData.mobile ||
+      verificationData.phone ||
+      userPayload?.phone ||
+      "";
+    const phone = phoneRaw ? phoneRaw.toString().replace(/\D/g, "") : "";
+    const emailRaw = verificationData.email || userPayload?.email || "";
+    const email = emailRaw
+      ? emailRaw.toString().trim().toLowerCase() || undefined
+      : undefined;
+
+    if (!verification.success) {
+      console.warn(
+        "[MSG91] Access token verification failed:",
+        verification.message,
+        verification.error || ""
+      );
+
+      if (!phone && !email) {
+        return res.status(401).json({
+          success: false,
+          message:
+            "Unable to verify your phone or email. Please retry the OTP flow or contact the administrator.",
+        });
+      }
+    }
 
     if (!phone && !email) {
       return res.status(400).json({
         success: false,
-        message: "Phone or email required from MSG91",
+        message: "Phone or email required from MSG91 or registration form",
       });
     }
 
@@ -828,24 +894,46 @@ exports.registerWithMsg91 = async (req, res) => {
       $or: [...(email ? [{ email }] : []), ...(phone ? [{ phone }] : [])],
     });
 
+    const firstName =
+      (userPayload?.firstName || verificationData.name || "User")
+        .toString()
+        .split(" ")[0]
+        .trim() || "User";
+    const lastName =
+      (
+        userPayload?.lastName ||
+        verificationData.lastName ||
+        verificationData.name?.split(" ")[1]
+      )?.trim() || "Account";
+
     if (!user) {
-      // Create minimal user; rest from payload
-      const usernameBase = (
+      const baseCandidate = (
         userPayload?.username ||
-        email?.split("@")[0] ||
-        phone
-      ).toLowerCase();
-      const username = usernameBase;
-      const firstName = userPayload?.firstName || "";
-      const lastName = userPayload?.lastName || "";
-      const passwordHash = await hashPassword(
-        userPayload?.password || Math.random().toString(36).slice(2) + "A1!"
-      );
+        (email ? email.split("@")[0] : null) ||
+        (phone ? phone.slice(-6) : null) ||
+        `user${Date.now()}`
+      )
+        .toString()
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "");
+
+      const usernameBase =
+        baseCandidate.length > 0 ? baseCandidate : `user${Date.now()}`;
+      let username = usernameBase;
+      let suffix = 1;
+      // Ensure username uniqueness
+      while (await User.findOne({ username })) {
+        username = `${usernameBase}${suffix}`;
+        suffix += 1;
+      }
+
+      const passwordSource =
+        userPayload?.password || `${Math.random().toString(36).slice(2)}A1!`;
 
       user = new User({
         username,
-        email: email || undefined,
-        password: passwordHash,
+        email,
+        password: await hashPassword(passwordSource),
         firstName,
         lastName,
         phone: phone || undefined,
@@ -861,6 +949,28 @@ exports.registerWithMsg91 = async (req, res) => {
         ipAddress: req.ip,
         userAgent: req.get("User-Agent"),
       });
+    } else {
+      // Update missing fields if provided now
+      let shouldSave = false;
+      if (!user.email && email) {
+        user.email = email;
+        shouldSave = true;
+      }
+      if (!user.phone && phone) {
+        user.phone = phone;
+        shouldSave = true;
+      }
+      if (!user.firstName && firstName) {
+        user.firstName = firstName;
+        shouldSave = true;
+      }
+      if (!user.lastName && lastName) {
+        user.lastName = lastName;
+        shouldSave = true;
+      }
+      if (shouldSave) {
+        await user.save();
+      }
     }
 
     const token = generateToken(user._id);
@@ -969,18 +1079,26 @@ exports.sendRegistrationOTP = async (req, res) => {
       });
     }
 
+    console.log(`[SendOTP] Sending registration OTP for phone: ${phone}`);
+
     // Check if user already exists with this phone
     const existingUser = await User.findOne({ phone });
     if (existingUser) {
+      console.log(`[SendOTP] User already exists with phone: ${phone}`);
       return res.status(400).json({
         success: false,
         message: "User with this phone number already exists",
       });
     }
 
+    // Delete any existing OTPs for this phone number to avoid confusion
+    await OTP.deleteMany({ identifier: phone, type: "verification" });
+
     // Generate OTP
     const otpCode = generateOTP();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    console.log(`[SendOTP] Generated OTP: ${otpCode} for phone: ${phone}`);
 
     // Save OTP to database
     const otp = new OTP({
@@ -991,6 +1109,7 @@ exports.sendRegistrationOTP = async (req, res) => {
     });
 
     await otp.save();
+    console.log(`[SendOTP] OTP saved to database for phone: ${phone}`);
 
     // Send OTP via SMS
     const smsResult = await sendOTP(phone, otpCode, "verification");
@@ -1143,7 +1262,7 @@ exports.forgotPassword = async (req, res) => {
 
     // In production, implement actual email sending here
     if (user) {
-      //console.log(`Password reset requested for user: ${user.email}`);
+      console.log(`Password reset requested for user: ${user.email}`);
       // Generate reset token and send email
     }
   } catch (error) {

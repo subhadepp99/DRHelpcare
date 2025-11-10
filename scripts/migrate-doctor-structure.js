@@ -13,10 +13,10 @@ mongoose.connect(
 
 async function migrateDoctorStructure() {
   try {
-    //console.log("Starting migration...");
+    console.log("Starting migration...");
 
     // 1. Update existing doctors to have doctorFees field
-    //console.log("Updating doctors with doctorFees...");
+    console.log("Updating doctors with doctorFees...");
     const doctors = await Doctor.find({});
 
     for (const doctor of doctors) {
@@ -90,12 +90,12 @@ async function migrateDoctorStructure() {
       // Update doctor if there are changes
       if (Object.keys(updates).length > 0) {
         await Doctor.findByIdAndUpdate(doctor._id, updates);
-        //console.log(`Updated doctor: ${doctor.name}`);
+        console.log(`Updated doctor: ${doctor.name}`);
       }
     }
 
     // 2. Update existing clinics to have the new doctor structure
-    //console.log("Updating clinics with new doctor structure...");
+    console.log("Updating clinics with new doctor structure...");
     const clinics = await Clinic.find({});
 
     for (const clinic of clinics) {
@@ -118,21 +118,21 @@ async function migrateDoctorStructure() {
           }));
 
           await Clinic.findByIdAndUpdate(clinic._id, { doctors: newDoctors });
-          //console.log(`Updated clinic: ${clinic.name}`);
+          console.log(`Updated clinic: ${clinic.name}`);
         }
       }
     }
 
     // 3. Update clinic doctor counts
-    //console.log("Updating clinic doctor counts...");
+    console.log("Updating clinic doctor counts...");
     const updatedClinics = await Clinic.find({});
 
     for (const clinic of updatedClinics) {
       const activeDoctorCount = clinic.getActiveDoctorCount();
-      //console.log(`Clinic ${clinic.name}: ${activeDoctorCount} active doctors`);
+      console.log(`Clinic ${clinic.name}: ${activeDoctorCount} active doctors`);
     }
 
-    //console.log("Migration completed successfully!");
+    console.log("Migration completed successfully!");
   } catch (error) {
     console.error("Migration failed:", error);
   } finally {

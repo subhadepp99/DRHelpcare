@@ -266,20 +266,20 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
 // Sync department doctors (admin and above only)
 router.post("/sync-doctors", adminAuth, async (req, res) => {
   try {
-    //console.log("Starting department-doctors sync...");
+    console.log("Starting department-doctors sync...");
 
     // Get all departments
     const departments = await Department.find({});
-    //console.log(`Found ${departments.length} departments`);
+    console.log(`Found ${departments.length} departments`);
 
     // Clear all department doctors arrays first
     await Department.updateMany({}, { $set: { doctors: [] } });
-    //console.log("Cleared all department doctors arrays");
+    console.log("Cleared all department doctors arrays");
 
     // Get all active doctors
     const Doctor = require("../models/Doctor");
     const doctors = await Doctor.find({ isActive: true });
-    //console.log(`Found ${doctors.length} active doctors`);
+    console.log(`Found ${doctors.length} active doctors`);
 
     // Group doctors by department
     const departmentDoctors = {};

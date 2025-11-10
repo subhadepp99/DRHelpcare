@@ -14,7 +14,7 @@ const router = express.Router();
 router.get("/debug/departments", adminAuth, async (req, res) => {
   try {
     const departments = await Department.find({}, "name _id");
-    //console.log("Debug: Available departments:", departments);
+    console.log("Debug: Available departments:", departments);
     res.json({
       success: true,
       data: departments,
@@ -33,13 +33,13 @@ router.get("/debug/departments", adminAuth, async (req, res) => {
 router.get("/debug/department/:name", adminAuth, async (req, res) => {
   try {
     const { name } = req.params;
-    //console.log(`Debug: Looking for department: "${name}"`);
+    console.log(`Debug: Looking for department: "${name}"`);
 
     const department = await Department.findOne({
       name: { $regex: new RegExp(`^${name}$`, "i") },
     });
 
-    //console.log(`Debug: Department found:`, department);
+    console.log(`Debug: Department found:`, department);
 
     res.json({
       success: true,
@@ -210,11 +210,11 @@ router.get("/:id", async (req, res) => {
 // Create new doctor (Admin only)
 router.post("/", adminAuth, upload.single("image"), async (req, res) => {
   try {
-    //console.log("Create doctor request body:", req.body); // Debug log
-    //console.log("Department from request:", req.body.department); // Debug department specifically
-    //console.log("Department type:", typeof req.body.department); // Debug department type
-    //console.log("License number from request:", req.body.licenseNumber); // Debug license number
-    //console.log("License number type:", typeof req.body.licenseNumber); // Debug license number type
+    console.log("Create doctor request body:", req.body); // Debug log
+    console.log("Department from request:", req.body.department); // Debug department specifically
+    console.log("Department type:", typeof req.body.department); // Debug department type
+    console.log("License number from request:", req.body.licenseNumber); // Debug license number
+    console.log("License number type:", typeof req.body.licenseNumber); // Debug license number type
 
     const {
       name,
@@ -288,13 +288,13 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       name: { $regex: new RegExp(`^${department.trim()}$`, "i") },
     });
 
-    //console.log(`Looking for department: "${department}"`); // Debug log
-    //console.log(`Department found:`, departmentObj); // Debug log
+    console.log(`Looking for department: "${department}"`); // Debug log
+    console.log(`Department found:`, departmentObj); // Debug log
 
     if (!departmentObj) {
-      //console.log(`Department not found for name: "${department}"`); // Debug log
+      console.log(`Department not found for name: "${department}"`); // Debug log
       const availableDepts = await Department.find({}, "name");
-      //console.log("Available departments:", availableDepts); // Debug log
+      console.log("Available departments:", availableDepts); // Debug log
       return res.status(400).json({
         success: false,
         message: `Department with name "${department}" not found. Available departments: ${availableDepts
@@ -328,7 +328,7 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       try {
         doctorData.availableDateTime = JSON.parse(availableDateTime);
       } catch (error) {
-        //console.log("Error parsing availableDateTime:", error);
+        console.log("Error parsing availableDateTime:", error);
         doctorData.availableDateTime = [];
       }
     } else if (availableDateTime) {
@@ -340,7 +340,7 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       try {
         doctorData.clinicDetails = JSON.parse(clinicDetails);
       } catch (error) {
-        //console.log("Error parsing clinicDetails:", error);
+        console.log("Error parsing clinicDetails:", error);
         doctorData.clinicDetails = [];
       }
     } else if (clinicDetails) {
@@ -355,7 +355,7 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       try {
         doctorData.bookingSchedule = JSON.parse(req.body.bookingSchedule);
       } catch (error) {
-        //console.log("Error parsing bookingSchedule:", error);
+        console.log("Error parsing bookingSchedule:", error);
         doctorData.bookingSchedule = [];
       }
     } else if (req.body.bookingSchedule) {
@@ -372,10 +372,10 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       doctorData.licenseNumber = undefined;
     }
 
-    //console.log(
-    // "Final doctor data before save:",
-    // JSON.stringify(doctorData, null, 2)
-    // ); // Debug final data
+    console.log(
+      "Final doctor data before save:",
+      JSON.stringify(doctorData, null, 2)
+    ); // Debug final data
 
     // Add image path if uploaded
     if (req.file) {
@@ -414,7 +414,7 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
             },
           });
         } catch (error) {
-          //console.log(`Failed to sync clinic ${clinicDetail.clinic}:`, error);
+          console.log(`Failed to sync clinic ${clinicDetail.clinic}:`, error);
         }
       }
     }
@@ -459,10 +459,10 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
     const doctorId = req.params.id;
     const updates = { ...req.body };
 
-    //console.log("Update doctor request body:", req.body); // Debug log
-    //console.log("Updates object:", updates); // Debug log
-    //console.log("Department from request:", req.body.department); // Debug department specifically
-    //console.log("Department type:", typeof req.body.department); // Debug department type
+    console.log("Update doctor request body:", req.body); // Debug log
+    console.log("Updates object:", updates); // Debug log
+    console.log("Department from request:", req.body.department); // Debug department specifically
+    console.log("Department type:", typeof req.body.department); // Debug department type
 
     // Parse JSON strings if needed
     if (updates.address && typeof updates.address === "string") {
@@ -505,18 +505,18 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
         });
       }
 
-      //console.log(`Looking for department in update: "${updates.department}"`); // Debug log
+      console.log(`Looking for department in update: "${updates.department}"`); // Debug log
 
       const departmentObj = await Department.findOne({
         name: { $regex: new RegExp(`^${updates.department.trim()}$`, "i") },
       });
 
-      //console.log(`Department found in update:`, departmentObj); // Debug log
+      console.log(`Department found in update:`, departmentObj); // Debug log
 
       if (!departmentObj) {
-        //console.log(`Department not found for name: "${updates.department}"`); // Debug log
+        console.log(`Department not found for name: "${updates.department}"`); // Debug log
         const availableDepts = await Department.find({}, "name");
-        //console.log("Available departments:", availableDepts); // Debug log
+        console.log("Available departments:", availableDepts); // Debug log
         return res.status(400).json({
           success: false,
           message: `Department with name "${
@@ -548,7 +548,7 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       try {
         updates.availableDateTime = JSON.parse(updates.availableDateTime);
       } catch (error) {
-        //console.log("Error parsing availableDateTime in update:", error);
+        console.log("Error parsing availableDateTime in update:", error);
         updates.availableDateTime = [];
       }
     }
@@ -558,7 +558,7 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       try {
         updates.clinicDetails = JSON.parse(updates.clinicDetails);
       } catch (error) {
-        //console.log("Error parsing clinicDetails in update:", error);
+        console.log("Error parsing clinicDetails in update:", error);
         updates.clinicDetails = [];
       }
     }
@@ -571,7 +571,7 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
       try {
         updates.bookingSchedule = JSON.parse(updates.bookingSchedule);
       } catch (error) {
-        //console.log("Error parsing bookingSchedule in update:", error);
+        console.log("Error parsing bookingSchedule in update:", error);
         updates.bookingSchedule = [];
       }
     }
@@ -605,10 +605,10 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
         try {
           await fs.unlink(oldImagePath);
         } catch (error) {
-          //console.log(
-          //   "Old image not found or could not be deleted:",
-          //   error.message
-          // );
+          console.log(
+            "Old image not found or could not be deleted:",
+            error.message
+          );
         }
       }
 
@@ -668,7 +668,7 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
             },
           });
         } catch (error) {
-          //console.log(`Failed to sync clinic ${clinicDetail.clinic}:`, error);
+          console.log(`Failed to sync clinic ${clinicDetail.clinic}:`, error);
         }
       }
     }

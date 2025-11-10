@@ -47,7 +47,12 @@ async function verifyAccessToken(accessToken) {
     // Expecting a response that includes a verified/valid flag and optionally the identifier
     const data = response.data || {};
     const isVerified = Boolean(
-      data.verified || data.isVerified || data.valid || data.success
+      data.verified ||
+        data.isVerified ||
+        data.valid ||
+        data.success ||
+        data.status === "success" ||
+        data.type === "success"
     );
 
     return {
