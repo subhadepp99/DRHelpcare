@@ -13,7 +13,7 @@ const archiveUserSchema = new mongoose.Schema(
     },
     email: {
       type: String,
-      required: true,
+      required: false, // Email is optional as users may not have email
       trim: true,
       lowercase: true,
     },

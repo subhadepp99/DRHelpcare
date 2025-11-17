@@ -172,6 +172,33 @@ router.get("/", async (req, res) => {
   }
 });
 
+// Get featured doctors (max 25)
+router.get("/featured", async (req, res) => {
+  try {
+    const doctors = await Doctor.find({ isActive: true, isFeatured: true })
+      .select("-reviews -__v")
+      .populate("department", "name")
+      .populate("clinicDetails.clinic", "name address place state city")
+      .sort({ createdAt: -1 })
+      .limit(25);
+
+    res.json({
+      success: true,
+      data: {
+        doctors,
+        count: doctors.length,
+      },
+    });
+  } catch (error) {
+    console.error("Get featured doctors error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch featured doctors",
+      error: error.message,
+    });
+  }
+});
+
 // Get single doctor
 router.get("/:id", async (req, res) => {
   try {
@@ -386,6 +413,20 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
     // Add imageUrl if provided in body
     if (req.body.imageUrl) {
       doctorData.imageUrl = req.body.imageUrl;
+    }
+
+    // Handle isFeatured with validation (max 25 featured doctors)
+    if (req.body.isFeatured === "true" || req.body.isFeatured === true) {
+      const featuredCount = await Doctor.countDocuments({ isFeatured: true });
+      if (featuredCount >= 25) {
+        return res.status(400).json({
+          success: false,
+          message: "Maximum 25 doctors can be featured. Please unfeature another doctor first.",
+        });
+      }
+      doctorData.isFeatured = true;
+    } else {
+      doctorData.isFeatured = false;
     }
 
     const doctor = new Doctor(doctorData);
@@ -619,6 +660,27 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
     // Add imageUrl if provided in body
     if (req.body.imageUrl) {
       updates.imageUrl = req.body.imageUrl;
+    }
+
+    // Handle isFeatured with validation (max 25 featured doctors)
+    if (req.body.isFeatured !== undefined) {
+      const isFeaturedValue = req.body.isFeatured === "true" || req.body.isFeatured === true;
+      
+      // Only check limit if trying to set as featured
+      if (isFeaturedValue) {
+        // Check if this doctor is already featured (if so, no need to check limit)
+        const currentDoctor = await Doctor.findById(doctorId);
+        if (!currentDoctor || !currentDoctor.isFeatured) {
+          const featuredCount = await Doctor.countDocuments({ isFeatured: true });
+          if (featuredCount >= 25) {
+            return res.status(400).json({
+              success: false,
+              message: "Maximum 25 doctors can be featured. Please unfeature another doctor first.",
+            });
+          }
+        }
+      }
+      updates.isFeatured = isFeaturedValue;
     }
 
     const updatedDoctor = await Doctor.findByIdAndUpdate(doctorId, updates, {

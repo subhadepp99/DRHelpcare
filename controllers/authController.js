@@ -157,16 +157,22 @@ exports.register = async (req, res) => {
       });
     }
 
-    // Create new user
-    const user = new User({
+    // Create new user - only include email if it has a value
+    const userData = {
       username: username.toLowerCase(),
-      email: email ? email.toLowerCase() : undefined,
       password: await hashPassword(password),
       firstName,
       lastName,
       phone,
       role: "user", // Force user role for registration
-    });
+    };
+    
+    // Only add email if it's provided and not empty
+    if (email && email.trim()) {
+      userData.email = email.toLowerCase().trim();
+    }
+    
+    const user = new User(userData);
 
     await user.save();
 
@@ -862,10 +868,16 @@ exports.registerWithMsg91 = async (req, res) => {
       userPayload?.phone ||
       "";
     const phone = phoneRaw ? phoneRaw.toString().replace(/\D/g, "") : "";
+    
+    // Process email - ensure it's either a valid email string or completely omitted
     const emailRaw = verificationData.email || userPayload?.email || "";
-    const email = emailRaw
-      ? emailRaw.toString().trim().toLowerCase() || undefined
-      : undefined;
+    let email = null;
+    if (emailRaw && typeof emailRaw === 'string') {
+      const trimmed = emailRaw.trim().toLowerCase();
+      if (trimmed && trimmed.length > 0 && trimmed.includes('@')) {
+        email = trimmed;
+      }
+    }
 
     if (!verification.success) {
       console.warn(
@@ -890,9 +902,19 @@ exports.registerWithMsg91 = async (req, res) => {
       });
     }
 
-    let user = await User.findOne({
-      $or: [...(email ? [{ email }] : []), ...(phone ? [{ phone }] : [])],
-    });
+    // Build query to find existing user - only include email if it's valid
+    const queryConditions = [];
+    if (phone && phone.trim()) {
+      queryConditions.push({ phone: phone.trim() });
+    }
+    if (email && typeof email === 'string' && email.length > 0) {
+      queryConditions.push({ email });
+    }
+    
+    let user = null;
+    if (queryConditions.length > 0) {
+      user = await User.findOne({ $or: queryConditions });
+    }
 
     const firstName =
       (userPayload?.firstName || verificationData.name || "User")
@@ -930,15 +952,27 @@ exports.registerWithMsg91 = async (req, res) => {
       const passwordSource =
         userPayload?.password || `${Math.random().toString(36).slice(2)}A1!`;
 
-      user = new User({
+      // Build user data object - only include email if it has a value
+      const userData = {
         username,
-        email,
         password: await hashPassword(passwordSource),
         firstName,
         lastName,
-        phone: phone || undefined,
         role: "user",
-      });
+      };
+      
+      // Only add email if it's a valid non-empty string
+      if (email && typeof email === 'string' && email.length > 0) {
+        userData.email = email;
+      }
+      // Explicitly do NOT include email field if it's null/undefined/empty
+      
+      // Only add phone if it's provided
+      if (phone && phone.trim()) {
+        userData.phone = phone.trim();
+      }
+      
+      user = new User(userData);
       await user.save();
       await createActivity({
         type: "user_registered",

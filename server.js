@@ -15,22 +15,23 @@ connectDB();
 // Drop obsolete indexes once DB is connected (idempotent)
 mongoose.connection.once("open", async () => {
   try {
-    const collection = mongoose.connection.collection("pathologies");
-    const indexes = await collection.indexes();
+    // Fix pathologies email index
+    const pathologiesCollection = mongoose.connection.collection("pathologies");
+    const pathologyIndexes = await pathologiesCollection.indexes();
     // Drop obsolete index
-    const hasLicenseIdx = indexes.some((i) => i.name === "licenseNumber_1");
+    const hasLicenseIdx = pathologyIndexes.some((i) => i.name === "licenseNumber_1");
     if (hasLicenseIdx) {
-      await collection.dropIndex("licenseNumber_1");
+      await pathologiesCollection.dropIndex("licenseNumber_1");
       console.log("Dropped obsolete index licenseNumber_1 on pathologies");
     }
     // Ensure email index is partial unique (only enforce when email is a string)
-    const emailIdx = indexes.find((i) => i.name === "email_1");
-    if (emailIdx) {
+    const pathologyEmailIdx = pathologyIndexes.find((i) => i.name === "email_1");
+    if (pathologyEmailIdx) {
       // Drop and recreate as partial unique to avoid dup null errors
-      await collection.dropIndex("email_1");
+      await pathologiesCollection.dropIndex("email_1");
       console.log("Dropped existing email_1 index on pathologies");
     }
-    await collection.createIndex(
+    await pathologiesCollection.createIndex(
       { email: 1 },
       {
         name: "email_1",
@@ -39,6 +40,52 @@ mongoose.connection.once("open", async () => {
       }
     );
     console.log("Created partial unique index email_1 on pathologies");
+
+    // Fix users email index - make it sparse to allow multiple nulls
+    const usersCollection = mongoose.connection.collection("users");
+    const userIndexes = await usersCollection.indexes();
+    const userEmailIdx = userIndexes.find((i) => i.name === "email_1");
+    
+    // Check if index exists and is not sparse
+    if (userEmailIdx && (!userEmailIdx.sparse && !userEmailIdx.partialFilterExpression)) {
+      try {
+        await usersCollection.dropIndex("email_1");
+        console.log("Dropped existing non-sparse email_1 index on users");
+      } catch (dropError) {
+        console.warn("Could not drop email_1 index:", dropError.message);
+      }
+    }
+    
+    // Create sparse unique index (allows multiple nulls)
+    try {
+      await usersCollection.createIndex(
+        { email: 1 },
+        {
+          name: "email_1",
+          unique: true,
+          sparse: true, // This allows multiple documents with null/undefined email
+        }
+      );
+      console.log("Created sparse unique index email_1 on users");
+    } catch (createError) {
+      // Index might already exist as sparse, that's okay
+      if (!createError.message.includes("already exists")) {
+        console.warn("Could not create email_1 index:", createError.message);
+      }
+    }
+
+    // Clean up existing users with email: null by removing the email field
+    try {
+      const result = await usersCollection.updateMany(
+        { email: null },
+        { $unset: { email: "" } }
+      );
+      if (result.modifiedCount > 0) {
+        console.log(`Cleaned up ${result.modifiedCount} users with null email`);
+      }
+    } catch (cleanupError) {
+      console.warn("Could not clean up null emails:", cleanupError.message);
+    }
   } catch (e) {
     console.warn("Index cleanup skipped:", e.message);
   }

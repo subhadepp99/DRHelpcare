@@ -408,7 +408,8 @@ exports.deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (req.user.id === id) {
+    // Prevent users from deleting their own account
+    if (String(req.user._id) === String(id) || String(req.user.id) === String(id)) {
       return res.status(400).json({
         success: false,
         message: "Cannot delete your own account",
@@ -423,37 +424,52 @@ exports.deleteUser = async (req, res) => {
       });
     }
 
-    if (user.role === "superuser" && req.user.role !== "superuser") {
+    // Only superuser or masteruser can delete superuser accounts
+    if (user.role === "superuser" && !["superuser", "masteruser"].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: "Cannot delete superuser account",
+        message: "Cannot delete superuser account. Only superuser or masteruser can delete superuser accounts.",
+      });
+    }
+    
+    // Only masteruser can delete masteruser accounts
+    if (user.role === "masteruser" && req.user.role !== "masteruser") {
+      return res.status(403).json({
+        success: false,
+        message: "Cannot delete masteruser account. Only masteruser can delete masteruser accounts.",
       });
     }
 
     // Archive the user before deletion
-    const archiveUser = new ArchiveUser({
-      originalId: user._id.toString(),
-      username: user.username,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      phone: user.phone,
-      role: user.role,
-      profileImage: user.profileImage,
-      profileImageUrl: user.profileImageUrl,
-      address: user.address,
-      dateOfBirth: user.dateOfBirth,
-      gender: user.gender,
-      isActive: user.isActive,
-      lastLogin: user.lastLogin,
-      preferences: user.preferences,
-      accessRequest: user.accessRequest,
-      deletedBy: req.user.id,
-      deletionReason: "Admin requested permanent deletion",
-      originalData: user.toObject(),
-    });
+    try {
+      const archiveUser = new ArchiveUser({
+        originalId: user._id.toString(),
+        username: user.username,
+        email: user.email || undefined, // Only include if email exists
+        firstName: user.firstName,
+        lastName: user.lastName,
+        phone: user.phone,
+        role: user.role,
+        profileImage: user.profileImage,
+        profileImageUrl: user.profileImageUrl,
+        address: user.address,
+        dateOfBirth: user.dateOfBirth,
+        gender: user.gender,
+        isActive: user.isActive,
+        lastLogin: user.lastLogin,
+        preferences: user.preferences,
+        accessRequest: user.accessRequest,
+        deletedBy: req.user.id,
+        deletionReason: "Admin requested permanent deletion",
+        originalData: user.toObject(),
+      });
 
-    await archiveUser.save();
+      await archiveUser.save();
+    } catch (archiveError) {
+      // Log archive error but continue with deletion
+      console.error("Failed to archive user before deletion:", archiveError);
+      // Continue with deletion even if archiving fails
+    }
 
     // Delete the user from the main table
     await User.findByIdAndDelete(id);
