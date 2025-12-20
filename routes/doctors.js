@@ -140,13 +140,37 @@ router.get("/", async (req, res) => {
     const sortObj = {};
     sortObj[sortBy] = sortOrder === "desc" ? -1 : 1;
 
-    const doctors = await Doctor.find(query)
+    // Parse limit to ensure it's a valid number and cap it to prevent memory issues
+    const parsedLimit = Math.min(parseInt(limit) || 10, 1000);
+    const parsedPage = Math.max(parseInt(page) || 1, 1);
+
+    let doctors = await Doctor.find(query)
       .select("-reviews -__v")
-      .populate("department", "name") // Populate department name
-      .populate("clinicDetails.clinic", "name address place state city") // Populate clinic details
+      .populate({
+        path: "department",
+        select: "name",
+        strictPopulate: false, // Don't throw error if department doesn't exist
+      })
+      .populate({
+        path: "clinicDetails.clinic",
+        select: "name address place state city",
+        strictPopulate: false, // Don't throw error if clinic doesn't exist
+      })
       .sort(sortObj)
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .limit(parsedLimit)
+      .skip((parsedPage - 1) * parsedLimit)
+      .lean(); // Use lean() for better performance with large datasets
+
+    // Clean up any null populated values
+    doctors = doctors.map((doctor) => {
+      // Filter out null clinic references in clinicDetails
+      if (doctor.clinicDetails && Array.isArray(doctor.clinicDetails)) {
+        doctor.clinicDetails = doctor.clinicDetails.filter(
+          (detail) => detail.clinic !== null && detail.clinic !== undefined
+        );
+      }
+      return doctor;
+    });
 
     const total = await Doctor.countDocuments(query);
 
@@ -156,18 +180,22 @@ router.get("/", async (req, res) => {
         doctors,
         pagination: {
           total,
-          page: parseInt(page),
-          pages: Math.ceil(total / limit),
-          limit: parseInt(limit),
+          page: parsedPage,
+          pages: Math.ceil(total / parsedLimit),
+          limit: parsedLimit,
         },
       },
     });
   } catch (error) {
     console.error("Get doctors error:", error);
+    console.error("Error stack:", error.stack);
     res.status(500).json({
       success: false,
       message: "Failed to fetch doctors",
-      error: error.message,
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : "Internal server error",
     });
   }
 });
@@ -421,7 +449,8 @@ router.post("/", adminAuth, upload.single("image"), async (req, res) => {
       if (featuredCount >= 25) {
         return res.status(400).json({
           success: false,
-          message: "Maximum 25 doctors can be featured. Please unfeature another doctor first.",
+          message:
+            "Maximum 25 doctors can be featured. Please unfeature another doctor first.",
         });
       }
       doctorData.isFeatured = true;
@@ -664,18 +693,22 @@ router.put("/:id", adminAuth, upload.single("image"), async (req, res) => {
 
     // Handle isFeatured with validation (max 25 featured doctors)
     if (req.body.isFeatured !== undefined) {
-      const isFeaturedValue = req.body.isFeatured === "true" || req.body.isFeatured === true;
-      
+      const isFeaturedValue =
+        req.body.isFeatured === "true" || req.body.isFeatured === true;
+
       // Only check limit if trying to set as featured
       if (isFeaturedValue) {
         // Check if this doctor is already featured (if so, no need to check limit)
         const currentDoctor = await Doctor.findById(doctorId);
         if (!currentDoctor || !currentDoctor.isFeatured) {
-          const featuredCount = await Doctor.countDocuments({ isFeatured: true });
+          const featuredCount = await Doctor.countDocuments({
+            isFeatured: true,
+          });
           if (featuredCount >= 25) {
             return res.status(400).json({
               success: false,
-              message: "Maximum 25 doctors can be featured. Please unfeature another doctor first.",
+              message:
+                "Maximum 25 doctors can be featured. Please unfeature another doctor first.",
             });
           }
         }
