@@ -62,7 +62,6 @@ router.get("/", optionalAuth, async (req, res) => {
 
     const blogs = await Blog.find(query)
       .populate("createdBy", "firstName lastName email")
-      .select("-image.data") // Exclude large image data from list
       .sort({ publishedDate: -1, createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit))
@@ -70,9 +69,23 @@ router.get("/", optionalAuth, async (req, res) => {
 
     const total = await Blog.countDocuments(query);
 
+    // Convert database images to base64 data URLs for frontend
+    const blogsWithImages = blogs.map((blog) => {
+      const blogObj = { ...blog };
+      // If image data exists and no imageUrl is set, convert buffer to base64
+      if (blogObj.image && blogObj.image.data && !blogObj.imageUrl) {
+        blogObj.imageUrl = `data:${blogObj.image.contentType};base64,${blogObj.image.data.toString("base64")}`;
+      }
+      // Remove image.data from response to reduce payload size
+      if (blogObj.image && blogObj.image.data) {
+        delete blogObj.image.data;
+      }
+      return blogObj;
+    });
+
     res.json({
       success: true,
-      blogs,
+      blogs: blogsWithImages,
       pagination: {
         total,
         page: parseInt(page),

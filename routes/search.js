@@ -270,8 +270,16 @@ router.get("/", async (req, res) => {
       console.log("Doctor base query:", JSON.stringify(baseQuery, null, 2));
 
       if (q) {
+        // Normalize query to handle "Dr." with or without space
+        // This allows "Dr. Sayan" and "Dr.Sayan" to both match
+        // Replace "Dr." or "Dr " (with or without space) at word boundaries with flexible pattern
+        const normalizedQuery = q.replace(/\b(Dr|dr)\.?\s*/gi, (match) => {
+          // Replace with pattern that matches "Dr" followed by optional "." and optional space
+          return 'Dr\\.?\\s*';
+        });
+        
         // Text search with location filter
-        const regex = new RegExp(q, "i");
+        const regex = new RegExp(normalizedQuery, "i");
 
         // Find matching departments by name/heading/specialization
         let departmentIds = [];
@@ -689,7 +697,16 @@ router.get("/suggestions", async (req, res) => {
     const { q, type = "all" } = req.query;
     const suggestions = [];
     const hasQuery = typeof q === "string" && q.length > 0;
-    const regex = hasQuery ? new RegExp(q, "i") : null;
+    
+    // Normalize query to handle "Dr." with or without space for suggestions too
+    let normalizedQuery = q;
+    if (hasQuery) {
+      normalizedQuery = q.replace(/\b(Dr|dr)\.?\s*/gi, (match) => {
+        // Replace with pattern that matches "Dr" followed by optional "." and optional space
+        return 'Dr\\.?\\s*';
+      });
+    }
+    const regex = hasQuery ? new RegExp(normalizedQuery, "i") : null;
 
     // Default suggestions when no query: show departments
     if (!hasQuery) {
