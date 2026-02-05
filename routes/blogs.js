@@ -29,13 +29,7 @@ const upload = multer({
 // Get all blogs (with pagination and filters)
 router.get("/", optionalAuth, async (req, res) => {
   try {
-    const {
-      page = 1,
-      limit = 10,
-      category,
-      isPublished,
-      search,
-    } = req.query;
+    const { page = 1, limit = 10, category, isPublished, search } = req.query;
 
     const query = {};
 
@@ -47,7 +41,10 @@ router.get("/", optionalAuth, async (req, res) => {
     // Filter by published status
     if (isPublished !== undefined) {
       query.isPublished = isPublished === "true";
-    } else if (!req.user || (req.user.role !== "admin" && req.user.role !== "superuser")) {
+    } else if (
+      !req.user ||
+      (req.user.role !== "admin" && req.user.role !== "superuser")
+    ) {
       // By default, only show published blogs to non-admins
       query.isPublished = true;
     }
@@ -72,12 +69,12 @@ router.get("/", optionalAuth, async (req, res) => {
     // Convert database images to base64 data URLs for frontend
     const blogsWithImages = blogs.map((blog) => {
       const blogObj = { ...blog };
-      // If image data exists and no imageUrl is set, convert buffer to base64
-      if (blogObj.image && blogObj.image.data && !blogObj.imageUrl) {
-        blogObj.imageUrl = `data:${blogObj.image.contentType};base64,${blogObj.image.data.toString("base64")}`;
-      }
-      // Remove image.data from response to reduce payload size
+      // If image data exists in database, prioritize it over imageUrl
       if (blogObj.image && blogObj.image.data) {
+        blogObj.imageUrl = `data:${
+          blogObj.image.contentType
+        };base64,${blogObj.image.data.toString("base64")}`;
+        // Remove image.data from response to reduce payload size
         delete blogObj.image.data;
       }
       return blogObj;
@@ -108,7 +105,7 @@ router.get("/slug/:slug", async (req, res) => {
   try {
     const blog = await Blog.findOne({ slug: req.params.slug })
       .populate("createdBy", "firstName lastName email")
-      .select("-image.data"); // Exclude large image data
+      .lean();
 
     if (!blog) {
       return res.status(404).json({
@@ -117,8 +114,19 @@ router.get("/slug/:slug", async (req, res) => {
       });
     }
 
-    // Increment views
-    await blog.incrementViews();
+    // Convert database image to base64 data URL if it exists
+    if (blog.image && blog.image.data && !blog.imageUrl) {
+      blog.imageUrl = `data:${
+        blog.image.contentType
+      };base64,${blog.image.data.toString("base64")}`;
+    }
+    // Remove image.data from response to reduce payload size
+    if (blog.image && blog.image.data) {
+      delete blog.image.data;
+    }
+
+    // Increment views (need to fetch again as lean() returns plain object)
+    await Blog.findByIdAndUpdate(blog._id, { $inc: { views: 1 } });
 
     res.json({
       success: true,
@@ -139,13 +147,22 @@ router.get("/:id", async (req, res) => {
   try {
     const blog = await Blog.findById(req.params.id)
       .populate("createdBy", "firstName lastName email")
-      .select("-image.data");
+      .lean();
 
     if (!blog) {
       return res.status(404).json({
         success: false,
         message: "Blog not found",
       });
+    }
+
+    // Convert database image to base64 data URL if it exists (prioritize over imageUrl)
+    if (blog.image && blog.image.data) {
+      blog.imageUrl = `data:${
+        blog.image.contentType
+      };base64,${blog.image.data.toString("base64")}`;
+      // Remove image.data from response to reduce payload size
+      delete blog.image.data;
     }
 
     res.json({
@@ -202,15 +219,21 @@ router.post("/", auth, adminAuth, upload.single("image"), async (req, res) => {
       publishedDate:
         isPublished === "true" || isPublished === true ? new Date() : null,
       createdBy: req.user?.id || req.body.createdBy,
-      imageUrl: imageUrl || "/images/blog-default.jpg",
     };
 
-    // Handle image upload
+    // Handle image upload - prioritize file upload over imageUrl
     if (req.file) {
       blogData.image = {
         data: req.file.buffer,
         contentType: req.file.mimetype,
       };
+      // Clear imageUrl when uploading a file
+      blogData.imageUrl = "/images/blog-default.jpg";
+    } else if (imageUrl) {
+      // Only use imageUrl if no file is uploaded
+      blogData.imageUrl = imageUrl;
+    } else {
+      blogData.imageUrl = "/images/blog-default.jpg";
     }
 
     const blog = new Blog(blogData);
@@ -232,75 +255,85 @@ router.post("/", auth, adminAuth, upload.single("image"), async (req, res) => {
 });
 
 // Update blog (admin only)
-router.put("/:id", auth, adminAuth, upload.single("image"), async (req, res) => {
-  try {
-    const {
-      title,
-      excerpt,
-      content,
-      author,
-      category,
-      tags,
-      readTime,
-      isPublished,
-      imageUrl,
-    } = req.body;
+router.put(
+  "/:id",
+  auth,
+  adminAuth,
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      const {
+        title,
+        excerpt,
+        content,
+        author,
+        category,
+        tags,
+        readTime,
+        isPublished,
+        imageUrl,
+      } = req.body;
 
-    const blog = await Blog.findById(req.params.id);
+      const blog = await Blog.findById(req.params.id);
 
-    if (!blog) {
-      return res.status(404).json({
+      if (!blog) {
+        return res.status(404).json({
+          success: false,
+          message: "Blog not found",
+        });
+      }
+
+      // Update fields
+      if (title && title !== blog.title) {
+        blog.title = title;
+        blog.slug = Blog.generateSlug(title);
+      }
+      if (excerpt) blog.excerpt = excerpt;
+      if (content) blog.content = content;
+      if (author) blog.author = author;
+      if (category) blog.category = category;
+      if (tags) blog.tags = Array.isArray(tags) ? tags : JSON.parse(tags);
+      if (readTime) blog.readTime = readTime;
+
+      // Handle published status
+      if (isPublished !== undefined) {
+        const newIsPublished = isPublished === "true" || isPublished === true;
+        if (newIsPublished && !blog.isPublished) {
+          blog.publishedDate = new Date();
+        }
+        blog.isPublished = newIsPublished;
+      }
+
+      // Handle image upload - prioritize file upload over imageUrl
+      if (req.file) {
+        blog.image = {
+          data: req.file.buffer,
+          contentType: req.file.mimetype,
+        };
+        // Clear imageUrl when uploading a new file
+        blog.imageUrl = "/images/blog-default.jpg";
+      } else if (imageUrl) {
+        // Only update imageUrl if no file is uploaded
+        blog.imageUrl = imageUrl;
+      }
+
+      await blog.save();
+
+      res.json({
+        success: true,
+        message: "Blog updated successfully",
+        blog: await Blog.findById(blog._id).select("-image.data"),
+      });
+    } catch (error) {
+      console.error("Error updating blog:", error);
+      res.status(500).json({
         success: false,
-        message: "Blog not found",
+        message: "Failed to update blog",
+        error: error.message,
       });
     }
-
-    // Update fields
-    if (title && title !== blog.title) {
-      blog.title = title;
-      blog.slug = Blog.generateSlug(title);
-    }
-    if (excerpt) blog.excerpt = excerpt;
-    if (content) blog.content = content;
-    if (author) blog.author = author;
-    if (category) blog.category = category;
-    if (tags) blog.tags = Array.isArray(tags) ? tags : JSON.parse(tags);
-    if (readTime) blog.readTime = readTime;
-    if (imageUrl) blog.imageUrl = imageUrl;
-
-    // Handle published status
-    if (isPublished !== undefined) {
-      const newIsPublished = isPublished === "true" || isPublished === true;
-      if (newIsPublished && !blog.isPublished) {
-        blog.publishedDate = new Date();
-      }
-      blog.isPublished = newIsPublished;
-    }
-
-    // Handle image upload
-    if (req.file) {
-      blog.image = {
-        data: req.file.buffer,
-        contentType: req.file.mimetype,
-      };
-    }
-
-    await blog.save();
-
-    res.json({
-      success: true,
-      message: "Blog updated successfully",
-      blog: await Blog.findById(blog._id).select("-image.data"),
-    });
-  } catch (error) {
-    console.error("Error updating blog:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to update blog",
-      error: error.message,
-    });
   }
-});
+);
 
 // Delete blog (admin only)
 router.delete("/:id", auth, adminAuth, async (req, res) => {
@@ -325,6 +358,23 @@ router.delete("/:id", auth, adminAuth, async (req, res) => {
       message: "Failed to delete blog",
       error: error.message,
     });
+  }
+});
+
+// Get blog image from database
+router.get("/:id/image", async (req, res) => {
+  try {
+    const blog = await Blog.findById(req.params.id);
+
+    if (!blog || !blog.image || !blog.image.data) {
+      return res.status(404).json({ message: "Image not found" });
+    }
+
+    res.set("Content-Type", blog.image.contentType);
+    res.send(blog.image.data);
+  } catch (error) {
+    console.error("Get blog image error:", error);
+    res.status(500).json({ message: "Error fetching image" });
   }
 });
 
@@ -357,4 +407,3 @@ router.get("/meta/categories", async (req, res) => {
 });
 
 module.exports = router;
-

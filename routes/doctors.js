@@ -141,33 +141,206 @@ router.get("/", async (req, res) => {
     sortObj[sortBy] = sortOrder === "desc" ? -1 : 1;
 
     // Parse limit to ensure it's a valid number and cap it to prevent memory issues
-    const parsedLimit = Math.min(parseInt(limit) || 10, 1000);
+    // Default to 300 for initial load, max 1000 for lazy loading
+    const parsedLimit = Math.min(parseInt(limit) || 150, 1000);
     const parsedPage = Math.max(parseInt(page) || 1, 1);
 
-    let doctors = await Doctor.find(query)
-      .select("-reviews -__v")
-      .populate({
-        path: "department",
-        select: "name",
-        strictPopulate: false, // Don't throw error if department doesn't exist
-      })
-      .populate({
-        path: "clinicDetails.clinic",
-        select: "name address place state city",
-        strictPopulate: false, // Don't throw error if clinic doesn't exist
-      })
-      .sort(sortObj)
-      .limit(parsedLimit)
-      .skip((parsedPage - 1) * parsedLimit)
-      .lean(); // Use lean() for better performance with large datasets
+    // Check if populate is requested in query params
+    const shouldPopulate =
+      req.query.populate !== undefined && req.query.populate !== "false";
+    const populateFields = req.query.populate
+      ? req.query.populate.split(",").map((f) => f.trim())
+      : [];
+
+    let queryBuilder = Doctor.find(query).select("-reviews -__v");
+
+    // Conditionally populate based on query parameter or default behavior
+    if (shouldPopulate) {
+      // If specific fields requested, populate only those
+      if (populateFields.length > 0) {
+        if (populateFields.includes("department")) {
+          queryBuilder = queryBuilder.populate({
+            path: "department",
+            select: "name",
+            strictPopulate: false,
+          });
+        }
+        if (
+          populateFields.includes("clinicDetails.clinic") ||
+          populateFields.some((f) => f.startsWith("clinicDetails"))
+        ) {
+          queryBuilder = queryBuilder.populate({
+            path: "clinicDetails.clinic",
+            select: "name address place state city",
+            strictPopulate: false,
+          });
+        }
+      } else {
+        // If populate=true but no specific fields, populate all
+        queryBuilder = queryBuilder
+          .populate({
+            path: "department",
+            select: "name",
+            strictPopulate: false,
+          })
+          .populate({
+            path: "clinicDetails.clinic",
+            select: "name address place state city",
+            strictPopulate: false,
+          });
+      }
+    } else {
+      // Default: always populate for backward compatibility
+      queryBuilder = queryBuilder
+        .populate({
+          path: "department",
+          select: "name",
+          strictPopulate: false,
+        })
+        .populate({
+          path: "clinicDetails.clinic",
+          select: "name address place state city",
+          strictPopulate: false,
+        });
+    }
+
+    let doctors;
+    try {
+      // For datasets >= 300, use aggregation pipeline which better supports allowDiskUse
+      // This prevents MongoDB sort memory limit errors
+      if (parsedLimit >= 150) {
+        const aggregationPipeline = [
+          { $match: query },
+          { $sort: sortObj },
+          { $skip: (parsedPage - 1) * parsedLimit },
+          { $limit: parsedLimit },
+        ];
+
+        // Add department lookup if needed
+        if (
+          shouldPopulate &&
+          (populateFields.length === 0 || populateFields.includes("department"))
+        ) {
+          aggregationPipeline.push({
+            $lookup: {
+              from: "departments",
+              localField: "department",
+              foreignField: "_id",
+              as: "department",
+            },
+          });
+          aggregationPipeline.push({
+            $unwind: {
+              path: "$department",
+              preserveNullAndEmptyArrays: true,
+            },
+          });
+          aggregationPipeline.push({
+            $addFields: {
+              department: { $ifNull: ["$department", null] },
+            },
+          });
+        }
+
+        // Add clinic lookup if needed
+        if (
+          shouldPopulate &&
+          (populateFields.length === 0 ||
+            populateFields.includes("clinicDetails.clinic") ||
+            populateFields.some((f) => f.startsWith("clinicDetails")))
+        ) {
+          aggregationPipeline.push({
+            $lookup: {
+              from: "clinics",
+              localField: "clinicDetails.clinic",
+              foreignField: "_id",
+              as: "clinicLookup",
+            },
+          });
+          aggregationPipeline.push({
+            $addFields: {
+              clinicDetails: {
+                $map: {
+                  input: { $ifNull: ["$clinicDetails", []] },
+                  as: "detail",
+                  in: {
+                    $let: {
+                      vars: {
+                        matchedClinic: {
+                          $arrayElemAt: [
+                            {
+                              $filter: {
+                                input: "$clinicLookup",
+                                cond: {
+                                  $eq: ["$$this._id", "$$detail.clinic"],
+                                },
+                              },
+                            },
+                            0,
+                          ],
+                        },
+                      },
+                      in: {
+                        $mergeObjects: [
+                          "$$detail",
+                          {
+                            clinic: {
+                              $cond: {
+                                if: { $ne: ["$$matchedClinic", null] },
+                                then: "$$matchedClinic",
+                                else: null,
+                              },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          });
+          aggregationPipeline.push({ $project: { clinicLookup: 0 } });
+        }
+
+        aggregationPipeline.push({ $project: { reviews: 0, __v: 0 } });
+
+        doctors = await Doctor.aggregate(aggregationPipeline).allowDiskUse(
+          true
+        );
+      } else {
+        // For smaller datasets, use regular query with allowDiskUse before sort
+        doctors = await queryBuilder
+          .allowDiskUse(true) // Allow MongoDB to use disk for sorting - must be before sort
+          .sort(sortObj)
+          .limit(parsedLimit)
+          .skip((parsedPage - 1) * parsedLimit)
+          .lean();
+      }
+    } catch (populateError) {
+      console.error("Error during populate:", populateError);
+      // If populate fails, try without populate but still use allowDiskUse
+      doctors = await Doctor.find(query)
+        .select("-reviews -__v")
+        .allowDiskUse(true)
+        .sort(sortObj)
+        .limit(parsedLimit)
+        .skip((parsedPage - 1) * parsedLimit)
+        .lean();
+    }
 
     // Clean up any null populated values
     doctors = doctors.map((doctor) => {
       // Filter out null clinic references in clinicDetails
       if (doctor.clinicDetails && Array.isArray(doctor.clinicDetails)) {
         doctor.clinicDetails = doctor.clinicDetails.filter(
-          (detail) => detail.clinic !== null && detail.clinic !== undefined
+          (detail) =>
+            detail && detail.clinic !== null && detail.clinic !== undefined
         );
+      }
+      // Ensure department is null if not populated
+      if (doctor.department === null || doctor.department === undefined) {
+        doctor.department = null;
       }
       return doctor;
     });
