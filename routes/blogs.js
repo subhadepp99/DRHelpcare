@@ -114,23 +114,46 @@ router.get("/slug/:slug", async (req, res) => {
       });
     }
 
-    // Convert database image to base64 data URL if it exists
-    if (blog.image && blog.image.data && !blog.imageUrl) {
-      blog.imageUrl = `data:${
-        blog.image.contentType
-      };base64,${blog.image.data.toString("base64")}`;
+    // Convert database image to base64 data URL if it exists (prioritize over imageUrl)
+    // Use same approach as list endpoint for consistency
+    const blogObj = { ...blog };
+    if (blogObj.image && blogObj.image.data) {
+      try {
+        let base64String;
+        // Handle different Buffer formats from Mongoose lean()
+        if (Buffer.isBuffer(blogObj.image.data)) {
+          base64String = blogObj.image.data.toString("base64");
+        } else if (typeof blogObj.image.data === "object" && blogObj.image.data.type === "Buffer" && Array.isArray(blogObj.image.data.data)) {
+          // Handle Mongoose lean() serialized Buffer: { type: 'Buffer', data: [1,2,3...] }
+          base64String = Buffer.from(blogObj.image.data.data).toString("base64");
+        } else {
+          // Try direct toString as fallback (works in list endpoint when Buffer is still a Buffer)
+          base64String = blogObj.image.data.toString("base64");
+        }
+        
+        if (base64String && blogObj.image.contentType) {
+          blogObj.imageUrl = `data:${blogObj.image.contentType};base64,${base64String}`;
+        }
+        // Remove image.data from response to reduce payload size
+        delete blogObj.image.data;
+      } catch (error) {
+        console.error("Error converting blog image to base64:", error, "Image data type:", typeof blogObj.image.data, "Is Buffer:", Buffer.isBuffer(blogObj.image.data));
+        // If conversion fails, keep existing imageUrl or use default
+        if (!blogObj.imageUrl || blogObj.imageUrl === "/images/blog-default.jpg") {
+          blogObj.imageUrl = "/images/blog-default.jpg";
+        }
+      }
     }
-    // Remove image.data from response to reduce payload size
-    if (blog.image && blog.image.data) {
-      delete blog.image.data;
-    }
+    
+    // Use blogObj instead of blog for response
+    const responseBlog = blogObj;
 
     // Increment views (need to fetch again as lean() returns plain object)
     await Blog.findByIdAndUpdate(blog._id, { $inc: { views: 1 } });
 
     res.json({
       success: true,
-      blog,
+      blog: responseBlog,
     });
   } catch (error) {
     console.error("Error fetching blog:", error);
