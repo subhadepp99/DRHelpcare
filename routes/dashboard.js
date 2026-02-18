@@ -409,6 +409,7 @@ router.get("/activity", adminAuth, async (req, res) => {
       return res.json({
         success: true,
         data: { activities: mockActivities },
+        activities: mockActivities,
       });
     }
 
@@ -426,6 +427,7 @@ router.get("/activity", adminAuth, async (req, res) => {
     res.json({
       success: true,
       data: { activities: formattedActivities },
+      activities: formattedActivities,
     });
   } catch (error) {
     console.error("Recent activity error:", error);
@@ -488,9 +490,28 @@ router.get("/bookings", adminAuth, async (req, res) => {
       },
     ]);
 
+    const normalizedBookingStats = bookingStats.map((entry) => {
+      const statusMap = (entry.bookings || []).reduce((acc, item) => {
+        if (item?.status) acc[item.status] = item.count || 0;
+        return acc;
+      }, {});
+
+      return {
+        _id: entry._id,
+        date: entry._id,
+        total: entry.total || 0,
+        pending: statusMap.pending || 0,
+        confirmed: statusMap.confirmed || 0,
+        cancelled: statusMap.cancelled || 0,
+        completed: statusMap.completed || 0,
+        no_show: statusMap.no_show || 0,
+      };
+    });
+
     res.json({
       success: true,
-      data: { bookingStats },
+      data: { bookingStats: normalizedBookingStats },
+      bookingStats: normalizedBookingStats,
     });
   } catch (error) {
     console.error("Booking analytics error:", error);
