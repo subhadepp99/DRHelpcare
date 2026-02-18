@@ -180,7 +180,8 @@ router.get("/", async (req, res) => {
     };
 
     // --- DOCTORS ---
-    if (type === "all" || type === "doctors") {
+    // Only search doctors if type is "all" or "doctors" (not when searching for ambulance/clinic specifically)
+    if ((type === "all" || type === "doctors") && type !== "ambulance" && type !== "clinics") {
       let baseQuery = { isActive: true };
       if (specialization) baseQuery.specialization = specialization;
 
@@ -278,11 +279,12 @@ router.get("/", async (req, res) => {
           return 'Dr\\.?\\s*';
         });
         
-        // Text search with location filter
+        // Wildcard search for doctor names - prioritize name search
         const regex = new RegExp(normalizedQuery, "i");
 
-        // Find matching departments by name/heading/specialization
+        // Check if query matches a department name/heading/specialization
         let departmentIds = [];
+        let isDepartmentSearch = false;
         try {
           const deptDocs = await Department.find({
             $or: [
@@ -291,22 +293,31 @@ router.get("/", async (req, res) => {
               { specialization: regex },
             ],
             isActive: true,
-          }).select("_id");
+          }).select("_id name heading");
           departmentIds = deptDocs.map((d) => d._id);
+          isDepartmentSearch = deptDocs.length > 0;
         } catch (e) {
           departmentIds = [];
         }
 
+        // If it's a department search, show doctors in that department
+        // If it's a doctor name search, do wildcard search on name
         const searchQuery = {
           ...baseQuery,
-          $or: [
-            { name: regex },
-            { specialization: regex },
-            { bio: regex },
-            departmentIds.length
-              ? { department: { $in: departmentIds } }
-              : null,
-          ].filter(Boolean),
+          $or: isDepartmentSearch
+            ? [
+                // Department search: show all doctors in that department
+                departmentIds.length
+                  ? { department: { $in: departmentIds } }
+                  : null,
+              ].filter(Boolean)
+            : [
+                // Doctor name search: wildcard search on name field
+                { name: regex },
+                // Also include specialization and bio for flexibility
+                { specialization: regex },
+                { bio: regex },
+              ],
         };
 
         // Add location filter if present
@@ -367,7 +378,8 @@ router.get("/", async (req, res) => {
     }
 
     // --- CLINICS ---
-    if (type === "all" || type === "clinics") {
+    // Only search clinics if type is "all" or "clinics" (not when searching for ambulance specifically)
+    if ((type === "all" || type === "clinics") && type !== "ambulance") {
       let baseQuery = { isActive: true };
 
       let clinics;
@@ -377,6 +389,7 @@ router.get("/", async (req, res) => {
       );
 
       if (q) {
+        // Wildcard search for clinic names
         const regex = new RegExp(q, "i");
 
         // Find matching departments
@@ -593,18 +606,19 @@ router.get("/", async (req, res) => {
     }
 
     // --- AMBULANCES ---
-    if (type === "all" || type === "ambulance") {
+    // When type is "ambulance", ONLY search ambulances (not doctors/clinics)
+    if (type === "ambulance" || type === "all") {
       let baseQuery = { isActive: true };
 
       let ambulances;
       // For ambulances, ONLY search by location (city, state, location)
-      // Ignore text query for name/driverName - user requirement
+      // Search box is only for ambulance location search
       const ambulanceLocationFilter = buildLocationFilter(
         ["city", "location"],
         ["state"]
       );
 
-      // If query is provided, treat it as location search only
+      // If query is provided, treat it as location search only (wildcard)
       if (q && !locationRegex) {
         const regex = new RegExp(q, "i");
         ambulances = await Ambulance.find({
@@ -832,17 +846,18 @@ router.get("/suggestions", async (req, res) => {
       });
     }
 
-    // Ambulances
+    // Ambulances - only show when type is "all" or "ambulance"
     if (type === "all" || type === "ambulance") {
       const ambulances = await Ambulance.find(
         hasQuery
           ? {
               isActive: true,
-              $or: [{ name: regex }, { city: regex }, { state: regex }],
+              // For ambulance suggestions, search by location (city, state, location)
+              $or: [{ city: regex }, { state: regex }, { location: regex }],
             }
           : { isActive: true }
       )
-        .select("name city state")
+        .select("name city state location")
         .limit(10);
 
       ambulances.forEach((ambulance) => {
