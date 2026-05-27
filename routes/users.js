@@ -2,6 +2,8 @@ const express = require("express");
 const { auth, adminAuth, superuserAuth } = require("../middleware/auth");
 const { userUpload } = require("../middleware/uploadMiddleware"); // Use the user-specific upload middleware
 const userController = require("../controllers/userController");
+const User = require("../models/User");
+const { sendBackfillResponse } = require("../utils/localImageBackfill");
 
 const router = express.Router();
 
@@ -17,6 +19,16 @@ router.put(
   auth,
   userUpload.single("profileImage"),
   userController.updateUser
+);
+
+router.post("/backfill-local-images", adminAuth, (req, res) =>
+  sendBackfillResponse(req, res, {
+    Model: User,
+    featureName: "profile",
+    labelField: "username",
+    imageField: "profileImage",
+    imageUrlField: "profileImageUrl",
+  })
 );
 
 // Create new user (Admin only)

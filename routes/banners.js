@@ -4,6 +4,7 @@ const fs = require("fs/promises");
 const mongoose = require("mongoose");
 const { adminAuth } = require("../middleware/auth");
 const Banner = require("../models/Banner");
+const { sendBackfillResponse } = require("../utils/localImageBackfill");
 
 const router = express.Router();
 
@@ -12,6 +13,14 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
 });
+
+router.post("/backfill-local-images", adminAuth, (req, res) =>
+  sendBackfillResponse(req, res, {
+    Model: Banner,
+    featureName: "banner",
+    labelField: "title",
+  })
+);
 
 // Public: list active banners
 router.get("/", async (req, res) => {

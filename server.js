@@ -101,6 +101,10 @@ app.use(morgan("combined"));
 
 // Serve static files for uploads
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use(
+  "/sources",
+  express.static(path.join(__dirname, "..", "client", "src", "sources"))
+);
 
 // Define allowed origins
 const allowedOrigins = [

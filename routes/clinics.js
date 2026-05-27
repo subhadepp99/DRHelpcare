@@ -5,6 +5,7 @@ const fs = require("fs").promises;
 const Clinic = require("../models/Clinic");
 const { auth, adminAuth } = require("../middleware/auth");
 const { createActivity } = require("../utils/activity");
+const { sendBackfillResponse } = require("../utils/localImageBackfill");
 
 const router = express.Router();
 
@@ -28,6 +29,14 @@ const upload = multer({
     }
   },
 });
+
+router.post("/backfill-local-images", adminAuth, (req, res) =>
+  sendBackfillResponse(req, res, {
+    Model: Clinic,
+    featureName: "clinic",
+    labelField: "name",
+  })
+);
 
 // Get all clinics
 router.get("/", async (req, res) => {

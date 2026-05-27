@@ -4,7 +4,8 @@ const path = require("path");
 const fs = require("fs").promises;
 const router = express.Router();
 const Pathology = require("../models/Pathology");
-const { auth } = require("../middleware/auth");
+const { auth, adminAuth } = require("../middleware/auth");
+const { sendBackfillResponse } = require("../utils/localImageBackfill");
 
 // Configure multer for memory storage (database storage)
 const upload = multer({
@@ -26,6 +27,14 @@ const upload = multer({
     }
   },
 });
+
+router.post("/backfill-local-images", adminAuth, (req, res) =>
+  sendBackfillResponse(req, res, {
+    Model: Pathology,
+    featureName: "pathology",
+    labelField: "name",
+  })
+);
 
 // Test route to check if pathology is working
 router.get("/test", async (req, res) => {

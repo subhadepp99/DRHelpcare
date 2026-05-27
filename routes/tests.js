@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const path = require("path");
 const router = express.Router();
+const Test = require("../models/Test");
 const {
   getAllTests,
   getAllTestsForAdmin,
@@ -12,7 +13,8 @@ const {
   deleteTest,
   getTestImage,
 } = require("../controllers/testController");
-const { auth } = require("../middleware/auth");
+const { auth, adminAuth } = require("../middleware/auth");
+const { sendBackfillResponse } = require("../utils/localImageBackfill");
 
 // Configure multer for memory storage (database storage)
 const upload = multer({
@@ -38,6 +40,13 @@ const upload = multer({
 // Public routes
 router.get("/", getAllTests);
 router.get("/search", searchTests);
+router.post("/backfill-local-images", adminAuth, (req, res) =>
+  sendBackfillResponse(req, res, {
+    Model: Test,
+    featureName: "test",
+    labelField: "name",
+  })
+);
 router.get("/:id", getTestById);
 router.get("/:id/image", getTestImage);
 

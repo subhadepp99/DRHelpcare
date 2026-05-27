@@ -5,6 +5,149 @@ const { auth, adminAuth, optionalAuth } = require("../middleware/auth");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
+const axios = require("axios");
+
+const DEFAULT_BLOG_IMAGE = "/images/blog-default.jpg";
+const LOCAL_SOURCE_ROUTE = "/sources";
+const BLOG_SOURCE_FEATURE = "blog";
+const BLOG_SOURCE_DIR = path.resolve(
+  __dirname,
+  "..",
+  "..",
+  "client",
+  "src",
+  "sources",
+  BLOG_SOURCE_FEATURE
+);
+const MAX_BACKFILL_IMAGE_SIZE = 10 * 1024 * 1024;
+
+const contentTypeToExtension = (contentType = "") => {
+  const normalized = contentType.split(";")[0].trim().toLowerCase();
+  const extensionMap = {
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+  };
+
+  return extensionMap[normalized] || "";
+};
+
+const extensionFromUrl = (imageUrl = "") => {
+  try {
+    const parsedUrl = new URL(imageUrl, "http://local");
+    const ext = path
+      .extname(parsedUrl.pathname)
+      .replace(".", "")
+      .toLowerCase();
+    return ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext)
+      ? ext.replace("jpeg", "jpg")
+      : "";
+  } catch {
+    return "";
+  }
+};
+
+const isDefaultImageUrl = (imageUrl) =>
+  !imageUrl || imageUrl.trim() === "" || imageUrl === DEFAULT_BLOG_IMAGE;
+
+const isLocalSourceUrl = (imageUrl = "") => {
+  if (!imageUrl) return false;
+
+  try {
+    const parsedUrl = new URL(imageUrl, "http://local");
+    return parsedUrl.pathname.startsWith(
+      `${LOCAL_SOURCE_ROUTE}/${BLOG_SOURCE_FEATURE}/`
+    );
+  } catch {
+    return imageUrl.startsWith(`${LOCAL_SOURCE_ROUTE}/${BLOG_SOURCE_FEATURE}/`);
+  }
+};
+
+const getPublicServerBaseUrl = (req) => {
+  if (process.env.PUBLIC_API_ORIGIN) {
+    return process.env.PUBLIC_API_ORIGIN.replace(/\/$/, "");
+  }
+
+  const forwardedProto = req.headers["x-forwarded-proto"];
+  const forwardedHost = req.headers["x-forwarded-host"];
+  const protocol = Array.isArray(forwardedProto)
+    ? forwardedProto[0]
+    : forwardedProto?.split(",")[0] || req.protocol;
+  const host = Array.isArray(forwardedHost)
+    ? forwardedHost[0]
+    : forwardedHost || req.get("host");
+
+  return `${protocol}://${host}`;
+};
+
+const getImageBufferFromBlog = async (blog) => {
+  if (blog.image?.data) {
+    const buffer = Buffer.isBuffer(blog.image.data)
+      ? blog.image.data
+      : Buffer.from(blog.image.data.data || blog.image.data);
+
+    return {
+      buffer,
+      contentType: blog.image.contentType || "image/jpeg",
+      source: "database",
+    };
+  }
+
+  const imageUrl = blog.imageUrl;
+  if (isDefaultImageUrl(imageUrl) || isLocalSourceUrl(imageUrl)) {
+    return null;
+  }
+
+  if (imageUrl.startsWith("data:image/")) {
+    const matches = imageUrl.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+    if (!matches) return null;
+
+    return {
+      buffer: Buffer.from(matches[2], "base64"),
+      contentType: matches[1],
+      source: "data-url",
+    };
+  }
+
+  if (!/^https?:\/\//i.test(imageUrl)) {
+    return null;
+  }
+
+  const response = await axios.get(imageUrl, {
+    responseType: "arraybuffer",
+    timeout: 30000,
+    maxContentLength: MAX_BACKFILL_IMAGE_SIZE,
+    headers: {
+      Accept: "image/avif,image/webp,image/png,image/jpeg,image/gif,*/*;q=0.8",
+    },
+  });
+  const contentType = response.headers["content-type"]?.split(";")[0] || "";
+
+  if (!contentType.startsWith("image/")) {
+    throw new Error(`Remote URL did not return an image (${contentType})`);
+  }
+
+  return {
+    buffer: Buffer.from(response.data),
+    contentType,
+    source: "remote-url",
+  };
+};
+
+const getBlogImageFileName = (blog, contentType) => {
+  const baseName =
+    Blog.generateSlug(blog.slug || blog.title || String(blog._id)) ||
+    String(blog._id);
+  const ext =
+    contentTypeToExtension(contentType) ||
+    extensionFromUrl(blog.imageUrl) ||
+    "jpg";
+
+  return `${baseName}-${blog._id}.${ext}`;
+};
 
 // Multer configuration for image uploads
 const storage = multer.memoryStorage();
@@ -24,6 +167,111 @@ const upload = multer({
       cb(new Error("Only image files are allowed!"));
     }
   },
+});
+
+// Backfill blog images from MongoDB/remote URLs into client/src/sources/blog
+router.post("/backfill-local-images", auth, adminAuth, async (req, res) => {
+  const results = {
+    inspected: 0,
+    converted: 0,
+    skipped: 0,
+    failed: 0,
+    folder: BLOG_SOURCE_DIR,
+    feature: BLOG_SOURCE_FEATURE,
+    items: [],
+  };
+
+  try {
+    await fs.promises.mkdir(BLOG_SOURCE_DIR, { recursive: true });
+
+    const blogs = await Blog.find({
+      $or: [
+        { "image.data": { $exists: true, $ne: null } },
+        { imageUrl: { $exists: true, $nin: [null, "", DEFAULT_BLOG_IMAGE] } },
+      ],
+    });
+    const publicBaseUrl = getPublicServerBaseUrl(req);
+
+    for (const blog of blogs) {
+      results.inspected += 1;
+
+      try {
+        if (!blog.image?.data && isLocalSourceUrl(blog.imageUrl)) {
+          results.skipped += 1;
+          results.items.push({
+            id: blog._id,
+            title: blog.title,
+            status: "skipped",
+            reason: "Already using local source image",
+          });
+          continue;
+        }
+
+        const imagePayload = await getImageBufferFromBlog(blog);
+        if (!imagePayload?.buffer?.length) {
+          results.skipped += 1;
+          results.items.push({
+            id: blog._id,
+            title: blog.title,
+            status: "skipped",
+            reason: "No downloadable image found",
+          });
+          continue;
+        }
+
+        if (imagePayload.buffer.length > MAX_BACKFILL_IMAGE_SIZE) {
+          throw new Error("Image is larger than 10MB");
+        }
+
+        const fileName = getBlogImageFileName(blog, imagePayload.contentType);
+        const filePath = path.join(BLOG_SOURCE_DIR, fileName);
+        const publicPath = `${LOCAL_SOURCE_ROUTE}/${BLOG_SOURCE_FEATURE}/${encodeURIComponent(
+          fileName
+        )}`;
+        const publicUrl = `${publicBaseUrl}${publicPath}`;
+
+        await fs.promises.writeFile(filePath, imagePayload.buffer);
+        await Blog.updateOne(
+          { _id: blog._id },
+          {
+            $set: { imageUrl: publicUrl },
+            $unset: { image: "" },
+          }
+        );
+
+        results.converted += 1;
+        results.items.push({
+          id: blog._id,
+          title: blog.title,
+          status: "converted",
+          source: imagePayload.source,
+          imageUrl: publicUrl,
+        });
+      } catch (error) {
+        results.failed += 1;
+        results.items.push({
+          id: blog._id,
+          title: blog.title,
+          status: "failed",
+          reason: error.message,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Backfill complete: ${results.converted} converted, ${results.skipped} skipped, ${results.failed} failed`,
+      ...results,
+    });
+  } catch (error) {
+    console.error("Blog image backfill error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to backfill blog images",
+      error: error.message,
+      ...results,
+    });
+  }
 });
 
 // Get all blogs (with pagination and filters)

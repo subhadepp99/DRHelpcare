@@ -1,8 +1,9 @@
 const express = require("express");
 const multer = require("multer");
 const Ambulance = require("../models/Ambulance");
-const { auth } = require("../middleware/auth");
+const { auth, adminAuth } = require("../middleware/auth");
 const { createActivity } = require("../utils/activity");
+const { sendBackfillResponse } = require("../utils/localImageBackfill");
 
 const router = express.Router();
 
@@ -11,6 +12,14 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
 });
+
+router.post("/backfill-local-images", adminAuth, (req, res) =>
+  sendBackfillResponse(req, res, {
+    Model: Ambulance,
+    featureName: "ambulance",
+    labelField: "name",
+  })
+);
 
 // Get all ambulances (admin and above only)
 router.get("/", auth, async (req, res) => {
