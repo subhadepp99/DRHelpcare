@@ -28,16 +28,44 @@ const getAllTests = async (req, res) => {
 // Get all tests for admin
 const getAllTestsForAdmin = async (req, res) => {
   try {
-    const tests = await Test.find()
+    const { page = 1, limit = 12, search = "" } = req.query;
+    const parsedLimit = Math.min(Math.max(parseInt(limit) || 12, 1), 100);
+    const parsedPage = Math.max(parseInt(page) || 1, 1);
+    const query = {};
+
+    if (search.trim()) {
+      const regex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      query.$or = [
+        { name: regex },
+        { category: regex },
+        { sampleType: regex },
+        { description: regex },
+        { place: regex },
+        { state: regex },
+      ];
+    }
+
+    const [tests, total] = await Promise.all([
+      Test.find(query)
       .populate("pathologyLab", "name address place state phone email")
       .select("-__v")
-      .sort({ createdAt: -1 });
+        .sort({ createdAt: -1 })
+        .skip((parsedPage - 1) * parsedLimit)
+        .limit(parsedLimit),
+      Test.countDocuments(query),
+    ]);
 
     res.json({
       success: true,
       data: {
         tests,
-        total: tests.length,
+        total,
+        pagination: {
+          current: parsedPage,
+          total: Math.ceil(total / parsedLimit),
+          totalItems: total,
+          limit: parsedLimit,
+        },
       },
     });
   } catch (error) {

@@ -11,9 +11,27 @@ router.get("/", adminAuth, async (req, res) => {
       sort = "lastActivity",
       order = "desc",
       page = 1,
-      limit = 100,
+      limit = 12,
+      search = "",
     } = req.query;
-    const skip = (page - 1) * limit;
+    const parsedLimit = Math.min(Math.max(parseInt(limit) || 12, 1), 100);
+    const parsedPage = Math.max(parseInt(page) || 1, 1);
+    const skip = (parsedPage - 1) * parsedLimit;
+    const query = { role: "user" };
+
+    if (search.trim()) {
+      const regex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      query.$or = [
+        { firstName: regex },
+        { lastName: regex },
+        { email: regex },
+        { phone: regex },
+        { city: regex },
+        { state: regex },
+        { "address.city": regex },
+        { "address.state": regex },
+      ];
+    }
 
     let sortQuery = {};
     if (sort === "lastActivity") {
@@ -28,14 +46,14 @@ router.get("/", adminAuth, async (req, res) => {
     }
 
     const [patients, total] = await Promise.all([
-      User.find({ role: "user" })
+      User.find(query)
         .select(
           "firstName lastName email phone address city state createdAt lastActivity lastAppointment"
         )
         .sort(sortQuery)
         .skip(skip)
-        .limit(parseInt(limit)),
-      User.countDocuments({ role: "user" }),
+        .limit(parsedLimit),
+      User.countDocuments(query),
     ]);
 
     res.json({
@@ -43,9 +61,10 @@ router.get("/", adminAuth, async (req, res) => {
       data: {
         patients,
         pagination: {
-          current: parseInt(page),
-          total: Math.ceil(total / limit),
+          current: parsedPage,
+          total: Math.ceil(total / parsedLimit),
           totalItems: total,
+          limit: parsedLimit,
         },
       },
     });

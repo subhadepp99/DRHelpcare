@@ -15,7 +15,7 @@ const BLOG_SOURCE_DIR = path.resolve(
   "..",
   "..",
   "client",
-  "src",
+  "public",
   "sources",
   BLOG_SOURCE_FEATURE
 );
@@ -66,21 +66,21 @@ const isLocalSourceUrl = (imageUrl = "") => {
   }
 };
 
-const getPublicServerBaseUrl = (req) => {
-  if (process.env.PUBLIC_API_ORIGIN) {
-    return process.env.PUBLIC_API_ORIGIN.replace(/\/$/, "");
+const getLocalSourcePath = (imageUrl = "") => {
+  if (!imageUrl) return "";
+
+  try {
+    const parsedUrl = new URL(imageUrl, "http://local");
+    return parsedUrl.pathname.startsWith(
+      `${LOCAL_SOURCE_ROUTE}/${BLOG_SOURCE_FEATURE}/`
+    )
+      ? `${parsedUrl.pathname}${parsedUrl.search || ""}`
+      : "";
+  } catch {
+    return imageUrl.startsWith(`${LOCAL_SOURCE_ROUTE}/${BLOG_SOURCE_FEATURE}/`)
+      ? imageUrl
+      : "";
   }
-
-  const forwardedProto = req.headers["x-forwarded-proto"];
-  const forwardedHost = req.headers["x-forwarded-host"];
-  const protocol = Array.isArray(forwardedProto)
-    ? forwardedProto[0]
-    : forwardedProto?.split(",")[0] || req.protocol;
-  const host = Array.isArray(forwardedHost)
-    ? forwardedHost[0]
-    : forwardedHost || req.get("host");
-
-  return `${protocol}://${host}`;
 };
 
 const getImageBufferFromBlog = async (blog) => {
@@ -169,7 +169,7 @@ const upload = multer({
   },
 });
 
-// Backfill blog images from MongoDB/remote URLs into client/src/sources/blog
+// Backfill blog images from MongoDB/remote URLs into client/public/sources/blog
 router.post("/backfill-local-images", auth, adminAuth, async (req, res) => {
   const results = {
     inspected: 0,
@@ -190,19 +190,27 @@ router.post("/backfill-local-images", auth, adminAuth, async (req, res) => {
         { imageUrl: { $exists: true, $nin: [null, "", DEFAULT_BLOG_IMAGE] } },
       ],
     });
-    const publicBaseUrl = getPublicServerBaseUrl(req);
-
     for (const blog of blogs) {
       results.inspected += 1;
 
       try {
-        if (!blog.image?.data && isLocalSourceUrl(blog.imageUrl)) {
+        const existingLocalSourcePath = getLocalSourcePath(blog.imageUrl);
+
+        if (!blog.image?.data && existingLocalSourcePath) {
+          if (existingLocalSourcePath !== blog.imageUrl) {
+            await Blog.updateOne(
+              { _id: blog._id },
+              { $set: { imageUrl: existingLocalSourcePath } }
+            );
+          }
+
           results.skipped += 1;
           results.items.push({
             id: blog._id,
             title: blog.title,
             status: "skipped",
             reason: "Already using local source image",
+            imageUrl: existingLocalSourcePath,
           });
           continue;
         }
@@ -228,13 +236,12 @@ router.post("/backfill-local-images", auth, adminAuth, async (req, res) => {
         const publicPath = `${LOCAL_SOURCE_ROUTE}/${BLOG_SOURCE_FEATURE}/${encodeURIComponent(
           fileName
         )}`;
-        const publicUrl = `${publicBaseUrl}${publicPath}`;
 
         await fs.promises.writeFile(filePath, imagePayload.buffer);
         await Blog.updateOne(
           { _id: blog._id },
           {
-            $set: { imageUrl: publicUrl },
+            $set: { imageUrl: publicPath },
             $unset: { image: "" },
           }
         );
@@ -245,7 +252,7 @@ router.post("/backfill-local-images", auth, adminAuth, async (req, res) => {
           title: blog.title,
           status: "converted",
           source: imagePayload.source,
-          imageUrl: publicUrl,
+          imageUrl: publicPath,
         });
       } catch (error) {
         results.failed += 1;

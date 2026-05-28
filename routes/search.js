@@ -8,6 +8,21 @@ const Pathology = require("../models/Pathology");
 
 const router = express.Router();
 
+function escapeRegex(value = "") {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildSearchRegex(value = "") {
+  const trimmed = String(value).trim();
+  const withoutDoctorPrefix = trimmed.replace(/^dr\.?\s*/i, "").trim();
+
+  if (withoutDoctorPrefix && withoutDoctorPrefix !== trimmed) {
+    return new RegExp(`(?:dr\\.?\\s*)?${escapeRegex(withoutDoctorPrefix)}`, "i");
+  }
+
+  return new RegExp(escapeRegex(trimmed), "i");
+}
+
 function matchesText(doc, q, fields) {
   if (!q || q.trim() === "") return true;
 
@@ -134,7 +149,7 @@ router.get("/", async (req, res) => {
         cityPart = parts[0];
       }
       // Create regex for the full string for backwards compatibility
-      locationRegex = new RegExp(city, "i");
+      locationRegex = new RegExp(escapeRegex(city), "i");
     }
 
     // Helper function to build location filters for different entity types
@@ -157,12 +172,12 @@ router.get("/", async (req, res) => {
           $and: [
             {
               $or: cityFields.map((field) => ({
-                [field]: new RegExp(cityPart, "i"),
+                [field]: new RegExp(escapeRegex(cityPart), "i"),
               })),
             },
             {
               $or: stateFields.map((field) => ({
-                [field]: new RegExp(statePart, "i"),
+                [field]: new RegExp(escapeRegex(statePart), "i"),
               })),
             },
           ],
@@ -172,7 +187,7 @@ router.get("/", async (req, res) => {
       // Also match just the city part
       if (cityPart) {
         cityFields.forEach((field) =>
-          conditions.push({ [field]: new RegExp(cityPart, "i") })
+          conditions.push({ [field]: new RegExp(escapeRegex(cityPart), "i") })
         );
       }
 
@@ -271,16 +286,7 @@ router.get("/", async (req, res) => {
       console.log("Doctor base query:", JSON.stringify(baseQuery, null, 2));
 
       if (q) {
-        // Normalize query to handle "Dr." with or without space
-        // This allows "Dr. Sayan" and "Dr.Sayan" to both match
-        // Replace "Dr." or "Dr " (with or without space) at word boundaries with flexible pattern
-        const normalizedQuery = q.replace(/\b(Dr|dr)\.?\s*/gi, (match) => {
-          // Replace with pattern that matches "Dr" followed by optional "." and optional space
-          return 'Dr\\.?\\s*';
-        });
-        
-        // Wildcard search for doctor names - prioritize name search
-        const regex = new RegExp(normalizedQuery, "i");
+        const regex = buildSearchRegex(q);
 
         // Check if query matches a department name/heading/specialization
         let departmentIds = [];
@@ -316,7 +322,10 @@ router.get("/", async (req, res) => {
                 { name: regex },
                 // Also include specialization and bio for flexibility
                 { specialization: regex },
+                { qualification: regex },
                 { bio: regex },
+                { city: regex },
+                { state: regex },
               ],
         };
 
@@ -390,7 +399,7 @@ router.get("/", async (req, res) => {
 
       if (q) {
         // Wildcard search for clinic names
-        const regex = new RegExp(q, "i");
+        const regex = buildSearchRegex(q);
 
         // Find matching departments
         let departmentIds = [];
@@ -426,6 +435,10 @@ router.get("/", async (req, res) => {
           $or: [
             { name: regex },
             { services: { $in: [regex] } },
+            { facilities: { $in: [regex] } },
+            { place: regex },
+            { state: regex },
+            { address: regex },
             doctorIds.length ? { "doctors.doctor": { $in: doctorIds } } : null,
           ].filter(Boolean),
         };
@@ -486,11 +499,18 @@ router.get("/", async (req, res) => {
       );
 
       if (q) {
-        const regex = new RegExp(q, "i");
+        const regex = buildSearchRegex(q);
 
         const searchQuery = {
           ...baseQuery,
-          $or: [{ name: regex }, { category: regex }, { description: regex }],
+          $or: [
+            { name: regex },
+            { category: regex },
+            { description: regex },
+            { "components.name": regex },
+            { place: regex },
+            { state: regex },
+          ],
         };
 
         // Add location filter if present
@@ -541,7 +561,7 @@ router.get("/", async (req, res) => {
       );
 
       if (q) {
-        const regex = new RegExp(q, "i");
+        const regex = buildSearchRegex(q);
 
         try {
           const searchQuery = {
@@ -620,7 +640,7 @@ router.get("/", async (req, res) => {
 
       // If query is provided, treat it as location search only (wildcard)
       if (q && !locationRegex) {
-        const regex = new RegExp(q, "i");
+        const regex = buildSearchRegex(q);
         ambulances = await Ambulance.find({
           ...baseQuery,
           $or: [{ city: regex }, { state: regex }, { location: regex }],

@@ -69,39 +69,24 @@ const isDefaultImageUrl = (imageUrl, defaultImageUrl) =>
   String(imageUrl).trim() === "" ||
   (defaultImageUrl && imageUrl === defaultImageUrl);
 
-const isLocalSourceUrl = (imageUrl = "", featureName) => {
-  if (!imageUrl) return false;
-
-  try {
-    const parsedUrl = new URL(imageUrl, "http://local");
-    return parsedUrl.pathname.startsWith(
-      `${LOCAL_SOURCE_ROUTE}/${featureName}/`
-    );
-  } catch {
-    return String(imageUrl).startsWith(`${LOCAL_SOURCE_ROUTE}/${featureName}/`);
-  }
-};
-
-const getPublicServerBaseUrl = (req) => {
-  if (process.env.PUBLIC_API_ORIGIN) {
-    return process.env.PUBLIC_API_ORIGIN.replace(/\/$/, "");
-  }
-
-  const forwardedProto = req.headers["x-forwarded-proto"];
-  const forwardedHost = req.headers["x-forwarded-host"];
-  const protocol = Array.isArray(forwardedProto)
-    ? forwardedProto[0]
-    : forwardedProto?.split(",")[0] || req.protocol;
-  const host = Array.isArray(forwardedHost)
-    ? forwardedHost[0]
-    : forwardedHost || req.get("host");
-
-  return `${protocol}://${host}`;
-};
-
 const getDocumentValue = (doc, fieldName) => {
   if (!fieldName) return undefined;
   return fieldName.split(".").reduce((value, key) => value?.[key], doc);
+};
+
+const getLocalSourcePath = (imageUrl = "", featureName) => {
+  if (!imageUrl) return "";
+
+  try {
+    const parsedUrl = new URL(imageUrl, "http://local");
+    return parsedUrl.pathname.startsWith(`${LOCAL_SOURCE_ROUTE}/${featureName}/`)
+      ? `${parsedUrl.pathname}${parsedUrl.search || ""}`
+      : "";
+  } catch {
+    return String(imageUrl).startsWith(`${LOCAL_SOURCE_ROUTE}/${featureName}/`)
+      ? String(imageUrl)
+      : "";
+  }
 };
 
 const dataUrlToPayload = (dataUrl) => {
@@ -246,7 +231,7 @@ const backfillLocalImages = async ({
     "..",
     "..",
     "client",
-    "src",
+    "public",
     "sources",
     safeFeature
   );
@@ -265,8 +250,6 @@ const backfillLocalImages = async ({
   const documents = await Model.find(
     query || createBackfillQuery({ imageField, imageUrlField, defaultImageUrl })
   );
-  const publicBaseUrl = getPublicServerBaseUrl(req);
-
   for (const doc of documents) {
     results.inspected += 1;
 
@@ -274,14 +257,26 @@ const backfillLocalImages = async ({
       const imageValue = getDocumentValue(doc, imageField);
       const imageUrlValue = getDocumentValue(doc, imageUrlField);
       const label = getDocumentValue(doc, labelField);
+      const existingLocalSourcePath = getLocalSourcePath(
+        imageUrlValue,
+        safeFeature
+      );
 
-      if (!imageValue && isLocalSourceUrl(imageUrlValue, safeFeature)) {
+      if (!imageValue && existingLocalSourcePath) {
+        if (existingLocalSourcePath !== imageUrlValue) {
+          await Model.updateOne(
+            { _id: doc._id },
+            { $set: { [imageUrlField]: existingLocalSourcePath } }
+          );
+        }
+
         results.skipped += 1;
         results.items.push({
           id: doc._id,
           title: label,
           status: "skipped",
           reason: "Already using local source image",
+          imageUrl: existingLocalSourcePath,
         });
         continue;
       }
@@ -315,13 +310,12 @@ const backfillLocalImages = async ({
       const publicPath = `${LOCAL_SOURCE_ROUTE}/${safeFeature}/${encodeURIComponent(
         fileName
       )}`;
-      const publicUrl = `${publicBaseUrl}${publicPath}`;
 
       await fs.promises.writeFile(filePath, imagePayload.buffer);
       await Model.updateOne(
         { _id: doc._id },
         {
-          $set: { [imageUrlField]: publicUrl },
+          $set: { [imageUrlField]: publicPath },
           $unset: { [imageField]: "" },
         }
       );
@@ -332,7 +326,7 @@ const backfillLocalImages = async ({
         title: label,
         status: "converted",
         source: imagePayload.source,
-        imageUrl: publicUrl,
+        imageUrl: publicPath,
       });
     } catch (error) {
       results.failed += 1;

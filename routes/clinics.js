@@ -49,7 +49,10 @@ router.get("/", async (req, res) => {
       type = "",
       sortBy = "name",
       sortOrder = "asc",
+      compact = "false",
     } = req.query;
+    const parsedLimit = Math.min(Math.max(parseInt(limit) || 10, 1), 100);
+    const parsedPage = Math.max(parseInt(page) || 1, 1);
 
     const query = { isActive: true };
 
@@ -78,18 +81,25 @@ router.get("/", async (req, res) => {
     const sortObj = {};
     sortObj[sortBy] = sortOrder === "desc" ? -1 : 1;
 
-    const clinics = await Clinic.find(query)
+    let clinicsQuery = Clinic.find(query)
       .select("-reviews -__v -image.data")
-      .populate("doctors.doctor", "name qualification experience imageUrl")
       .sort(sortObj)
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .limit(parsedLimit)
+      .skip((parsedPage - 1) * parsedLimit)
+      .lean();
+
+    if (compact !== "true") {
+      clinicsQuery = clinicsQuery.populate(
+        "doctors.doctor",
+        "name qualification experience imageUrl"
+      );
+    }
+
+    const clinics = await clinicsQuery;
 
     const total = await Clinic.countDocuments(query);
 
-    // Convert database images to base64 for frontend
-    const clinicsWithImages = clinics.map((clinic) => {
-      const clinicObj = clinic.toObject();
+    const clinicsWithImages = clinics.map((clinicObj) => {
       if (clinicObj.image && clinicObj.image.data) {
         clinicObj.image = `data:${
           clinicObj.image.contentType
@@ -103,9 +113,15 @@ router.get("/", async (req, res) => {
       data: {
         clinics: clinicsWithImages,
         total,
-        page: page * 1,
-        limit: limit * 1,
-        totalPages: Math.ceil(total / limit),
+        page: parsedPage,
+        limit: parsedLimit,
+        totalPages: Math.ceil(total / parsedLimit),
+        pagination: {
+          current: parsedPage,
+          total: Math.ceil(total / parsedLimit),
+          totalItems: total,
+          limit: parsedLimit,
+        },
       },
     });
   } catch (error) {

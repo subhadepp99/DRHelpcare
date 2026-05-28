@@ -103,7 +103,7 @@ app.use(morgan("combined"));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use(
   "/sources",
-  express.static(path.join(__dirname, "..", "client", "src", "sources"))
+  express.static(path.join(__dirname, "..", "client", "public", "sources"))
 );
 
 // Define allowed origins
